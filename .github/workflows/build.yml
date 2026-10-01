@@ -1,0 +1,97 @@
+name: Build VoxSlap installers
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  JUCE_TAG: "8.0.10"
+  VERSION: "1.0.0"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            cmake_extra: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          - name: Windows
+            os: windows-latest
+            cmake_extra: ""
+          - name: Linux
+            os: ubuntu-latest
+            cmake_extra: ""
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get JUCE
+        shell: bash
+        run: git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev libfreetype-dev \
+            libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVOXSLAP_COPY_AFTER_BUILD=OFF ${{ matrix.cmake_extra }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel 4
+
+      - name: macOS installer
+        if: runner.os == 'macOS'
+        run: installer/mac/build_pkg.sh build/VoxSlap_artefacts/Release out "$VERSION"
+
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DArtefacts=$PWD\build\VoxSlap_artefacts\Release" "/DOutDir=$PWD\out" "/DAppVersion=$env:VERSION" installer\windows\VoxSlap.iss
+
+      - name: Linux package
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p out/VoxSlap-Linux
+          cp -R build/VoxSlap_artefacts/Release/VST3/VoxSlap.vst3 out/VoxSlap-Linux/
+          cp build/VoxSlap_artefacts/Release/Standalone/VoxSlap out/VoxSlap-Linux/
+          cp installer/linux/install.sh out/VoxSlap-Linux/
+          tar -czf out/VoxSlap-Linux.tar.gz -C out VoxSlap-Linux
+          rm -rf out/VoxSlap-Linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoxSlap-${{ matrix.name }}
+          path: out
+
+  bundle:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+          merge-multiple: true
+      - name: Bundle all installers
+        run: |
+          mkdir VoxSlap-Installers
+          cp parts/* VoxSlap-Installers/
+          cp installer/INSTALL.txt VoxSlap-Installers/
+          ls -la VoxSlap-Installers
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoxSlap-Installers-All
+          path: VoxSlap-Installers

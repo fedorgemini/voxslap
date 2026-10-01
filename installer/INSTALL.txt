@@ -1,0 +1,25 @@
+VoxSlap VS-1 — vocal slapback echo
+===================================
+
+WINDOWS (10 / 11, 64-bit)
+  1. Запустите VoxSlap-Windows-Setup.exe.
+     Если появится синее окно «Windows защитила ваш компьютер», нажмите
+     «Подробнее» -> «Выполнить в любом случае» (у установщика нет платной подписи).
+  2. Нажимайте «Далее». VST3 установится в C:\Program Files\Common Files\VST3\
+  3. Откройте DAW и пересканируйте плагины (FL Studio: Options -> Manage plugins -> Find plugins).
+  Удаление: Параметры -> Приложения -> VoxSlap -> Удалить.
+
+MAC (Apple Silicon и Intel, macOS 10.13+)
+  1. Откройте VoxSlap-macOS-Installer.pkg.
+     Если macOS не даёт открыть файл: Системные настройки -> Конфиденциальность и безопасность ->
+     внизу «Всё равно открыть» (или правый клик по файлу -> Открыть).
+  2. Пройдите установку и введите пароль от Mac.
+     Установятся AU (Logic, GarageBand), VST3 и приложение VoxSlap в «Программы».
+  3. Перезапустите DAW. В Logic: Audio FX -> Audio Units -> Homebrew Audio -> VoxSlap.
+
+LINUX (64-bit)
+  tar -xzf VoxSlap-Linux.tar.gz && ./VoxSlap-Linux/install.sh
+  VST3 появится в ~/.vst3 (Reaper, Bitwig, Ardour).
+
+Свои пресеты хранятся в папке Документы/VoxSlap/Presets — файлы .vspreset можно
+пересылать друзьям и класть в эту же папку.

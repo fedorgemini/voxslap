@@ -1,0 +1,6 @@
+JUCE/
+build*/
+.tools/
+render/
+.DS_Store
+dist/
