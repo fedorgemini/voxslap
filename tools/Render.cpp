@@ -140,12 +140,15 @@ int main (int argc, char** argv)
     }
 
     // Editor screenshots (simple and advanced) with some audio in the meters.
-    for (bool advanced : { false, true })
+    for (int variant = 0; variant < 3; ++variant)
     {
+        const bool advanced = variant >= 1;
+        const double scale = variant == 2 ? 1.5 : 1.0;
         VoxSlapProcessor proc;
         proc.setPlayConfigDetails (2, 2, sr, block);
         proc.presets.loadFactoryPreset (1);
         proc.apvts.state.setProperty ("advanced", advanced, nullptr);
+        proc.apvts.state.setProperty ("uiScale", scale, nullptr);
         proc.prepareToPlay (sr, block);
 
         std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
@@ -161,7 +164,7 @@ int main (int argc, char** argv)
         }
 
         auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
-        auto file = outDir.getChildFile (advanced ? "ui_advanced.png" : "ui_simple.png");
+        auto file = outDir.getChildFile (variant == 2 ? "ui_150.png" : advanced ? "ui_advanced.png" : "ui_simple.png");
         file.deleteFile();
         juce::FileOutputStream fos (file);
         juce::PNGImageFormat().writeImageToStream (image, fos);

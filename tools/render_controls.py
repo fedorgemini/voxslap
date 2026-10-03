@@ -278,7 +278,7 @@ def build_chicken_knob():
     return group([body, hub, insert, l1, l2])
 
 
-def build_toggle(on):
+def build_toggle(tilt_deg, horizontal=False):
     chrome = material("Chrome", (0.95, 0.95, 0.95), metallic=1.0, rough=0.07)
     satin = material("Satin", (0.85, 0.85, 0.84), metallic=1.0, rough=0.28)
     hole = material("Hole", (0.01, 0.01, 0.01), rough=0.6)
@@ -310,21 +310,11 @@ def build_toggle(on):
     lever.location = (0, 0, 0.35)
     shaft.parent = lever
     ball.parent = lever
-    lever.rotation_euler.x = math.radians(-62 if on else 62)
+    if horizontal:
+        lever.rotation_euler.y = math.radians(tilt_deg)   # positive = lever to the right
+    else:
+        lever.rotation_euler.x = math.radians(-tilt_deg)  # positive = lever up
     return group([ring, nut, bushing, inner, lever])
-
-
-def build_key(state):
-    lit = state == "on"
-    cream = material("Key", (0.66, 0.62, 0.51) if not lit else (0.75, 0.55, 0.30), rough=0.38, subsurface=0.15,
-                     emission=(1.0, 0.52, 0.10) if lit else None, emission_strength=0.7 if lit else 0.0)
-    frame = material("Frame", (0.02, 0.02, 0.02), rough=0.5)
-    surround = box("Surround", -1.42, 1.42, -0.60, 0.60, 0.0, 0.10)
-    assign(surround, frame); smooth(surround, 0.04, 3)
-    z_top = 0.30 if state == "down" else 0.40
-    cap = box("Cap", -1.30, 1.30, -0.48, 0.48, 0.0, z_top)
-    assign(cap, cream); smooth(cap, 0.09, 5)
-    return group([surround, cap])
 
 
 # ---------------------------------------------------------------- render jobs
@@ -356,12 +346,16 @@ def render_states(name, builder, states, res, ortho):
         bpy.ops.render.render(write_still=True)
 
 
+# Sizes are 3x the largest on-screen size at 100% so the UI stays sharp at 150% on Retina.
+TOGGLE_TILTS = [62, 31, 0, -31, -62]   # frame 0 = on (up), last = off (down); middle frames animate the flip
+
 JOBS = {
-    "alu":     lambda: render_rotations("alu", build_alu_knob, 200),
-    "black":   lambda: render_rotations("black", build_black_knob, 120),
-    "chicken": lambda: render_rotations("chicken", build_chicken_knob, 180),
-    "toggle":  lambda: render_states("toggle", build_toggle, [True, False], (200, 200), 2 * 2.6),
-    "key":     lambda: render_states("key", build_key, ["off", "on", "down"], (300, 140), 3.0),
+    "alu":     lambda: render_rotations("alu", build_alu_knob, 300),
+    "black":   lambda: render_rotations("black", build_black_knob, 180),
+    "chicken": lambda: render_rotations("chicken", build_chicken_knob, 270),
+    "toggle":  lambda: render_states("toggle", build_toggle, TOGGLE_TILTS, (300, 300), 2 * 2.6),
+    "power":   lambda: render_states("power", lambda t: build_toggle(t, horizontal=True),
+                                     TOGGLE_TILTS, (240, 240), 2 * 2.6),
 }
 
 for job_name, job in JOBS.items():

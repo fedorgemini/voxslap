@@ -33,10 +33,20 @@ public:
 
     juce::String getCurrentName() const;
 
+    // A/B compare: two in-memory snapshots of the parameter values.
+    int getActiveSlot() const { return activeSlot; }
+    void switchToSlot (int slot);
+    void copyActiveToOther();
+
 private:
     void setCurrentName (const juce::String&);
     void resetToDefaults();
     void setParam (const juce::String& id, float realValue);
+    juce::ValueTree captureParameters() const;
+    void applyParameters (const juce::ValueTree&);
+
+    std::array<juce::ValueTree, 2> slots;
+    int activeSlot = 0;
 
     juce::AudioProcessorValueTreeState& state;
 };

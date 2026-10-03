@@ -25,6 +25,7 @@ namespace ParamID
     inline constexpr const char* reverse     = "reverse";
     inline constexpr const char* freeze      = "freeze";
     inline constexpr const char* output      = "output";
+    inline constexpr const char* bypass      = "bypass";
 }
 
 enum class EchoMode { slap = 0, pingPong, wide };
@@ -109,6 +110,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     layout.add (std::make_unique<AudioParameterBool>   (ParameterID { ParamID::reverse, 1 }, "Reverse", false));
     layout.add (std::make_unique<AudioParameterBool>   (ParameterID { ParamID::freeze, 1 }, "Freeze", false));
     layout.add (std::make_unique<APF> (ParameterID { ParamID::output, 1 }, "Output", NormalisableRange<float> (-24.0f, 12.0f), 0.0f, db));
+    layout.add (std::make_unique<AudioParameterBool>   (ParameterID { ParamID::bypass, 1 }, "Bypass", false));
 
     return layout;
 }

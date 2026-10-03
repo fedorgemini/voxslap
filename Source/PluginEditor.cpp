@@ -3,8 +3,14 @@
 
 using namespace Analog;
 
-static const juce::Identifier advancedProp { "advanced" };
+static const juce::Identifier advancedProp { "advanced" }, scaleProp { "uiScale" }, meterModeProp { "meterMode" };
 
+// Rendered faceplate geometry (must match tools/render_faceplate.py): meter wells, logical px.
+static const juce::Rectangle<int> inputWell { 56, 92, 214, 196 }, scopeWell { 284, 92, 432, 196 }, outputWell { 730, 92, 214, 196 };
+static const juce::Rectangle<int> namePlate { 44, 16, 912, 60 };
+static constexpr int wellInset = 15; // face/screen starts at the bottom of the sloped well walls
+
+//==============================================================================
 // Greyscale smudge scan turned into an alpha mask, shared by every piece of glass.
 struct GlassSmudges
 {
@@ -25,7 +31,6 @@ static void drawGlassSmudges (juce::Graphics& g, juce::Rectangle<float> glass, f
 {
     juce::SharedResourcePointer<GlassSmudges> smudges;
     const auto& m = smudges->mask;
-    // Each piece of glass shows a different part of the scan.
     const int sx = (seed * 173) % (m.getWidth() / 2), sy = (seed * 97) % (m.getHeight() / 2);
     juce::Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (glass.toNearestInt());
@@ -34,7 +39,6 @@ static void drawGlassSmudges (juce::Graphics& g, juce::Rectangle<float> glass, f
                  sx, sy, m.getWidth() / 2, m.getHeight() / 2, true);
 }
 
-//==============================================================================
 // Short numbers for printed scales: 2 significant digits, "k" for thousands.
 static juce::String scaleNumber (float v)
 {
@@ -51,6 +55,7 @@ static juce::String scaleNumber (float v)
     return std::abs (r - std::round (r)) < 0.05f ? juce::String (juce::roundToInt (r)) : juce::String (r, 1);
 }
 
+//==============================================================================
 KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char* paramID,
                           const juce::String& t, KnobStyle style, const juce::String& scaleLabels)
     : title (t)
@@ -59,8 +64,9 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (Slider::NoTextBox, false, 0, 0);
     slider.setMouseDragSensitivity (style == KnobStyle::chicken ? 140 : 240);
+    // Holding Shift switches to slow, velocity-based dragging for fine adjustments.
+    slider.setVelocityModeParameters (0.25, 1, 0.0, true, ModifierKeys::shiftModifier);
     slider.addMouseListener (this, false);
-    // Printed scale labels may extend past the knob's own box, like silkscreen on a panel.
     slider.setPaintingIsUnclipped (true);
     setPaintingIsUnclipped (true);
 
@@ -70,9 +76,8 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     if (labels == "auto")
     {
         labels.clear();
-        const auto& range = param->getNormalisableRange();
-        // Small knobs only have room for the ends and the centre.
         const bool sparse = style == KnobStyle::black;
+        const auto& range = param->getNormalisableRange();
         for (int i = 0; i < 5; ++i)
             labels << (i > 0 ? "|" : "") << (sparse && (i % 2 == 1) ? String() : scaleNumber (range.convertFrom0to1 ((float) i / 4.0f)));
     }
@@ -99,9 +104,16 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     }
 
     attachment = std::make_unique<AudioProcessorValueTreeState::SliderAttachment> (state, paramID, slider);
-    slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    defaultValue = param->convertFrom0to1 (param->getDefaultValue());
+    slider.setDoubleClickReturnValue (true, defaultValue);
     slider.onValueChange = [this] { repaint(); };
     addAndMakeVisible (slider);
+}
+
+void KnobControl::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isAltDown())
+        slider.setValue (defaultValue, juce::sendNotificationSync);
 }
 
 void KnobControl::resized()
@@ -114,11 +126,9 @@ void KnobControl::resized()
 
 void KnobControl::paint (juce::Graphics& g)
 {
-    g.setColour (juce::Colours::black.withAlpha (0.45f));
-    g.setFont (font (12.0f));
     auto titleArea = getLocalBounds().removeFromTop (20);
-    g.drawText (title, titleArea.translated (0, 1), juce::Justification::centred);
-    g.setColour (Palette::silkscreen);
+    g.setFont (font (14.5f));
+    setInk (g, Palette::silkscreen, panelOrigin (*this));
     g.drawText (title, titleArea, juce::Justification::centred);
 }
 
@@ -128,9 +138,9 @@ void KnobControl::paintOverChildren (juce::Graphics& g)
         return;
 
     const auto text = slider.getTextFromValue (slider.getValue());
-    g.setFont (mono (11.5f));
+    g.setFont (mono (12.0f));
     const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) + 14.0f;
-    auto plate = juce::Rectangle<float> (tw, 16.0f).withCentre ({ (float) getWidth() * 0.5f, (float) getHeight() - 8.0f });
+    auto plate = juce::Rectangle<float> (tw, 17.0f).withCentre ({ (float) getWidth() * 0.5f, (float) getHeight() - 8.0f });
     g.setColour (juce::Colours::black.withAlpha (0.85f));
     g.fillRoundedRectangle (plate, 3.0f);
     g.setColour (Palette::amber);
@@ -138,20 +148,45 @@ void KnobControl::paintOverChildren (juce::Graphics& g)
 }
 
 //==============================================================================
-void VUMeter::setPeak (float linearPeak)
+static float vuPosForDb (float db) { return std::pow (10.0f, db / 20.0f) / 1.4125f; }
+
+void VUMeter::update (float meanSquare, float peak, float duckGain, float dt)
 {
-    // 0 VU calibrated to -12 dBFS peak; the scale is linear in voltage like a real VU.
-    const float vuDb = juce::Decibels::gainToDecibels (linearPeak, -60.0f) + 12.0f;
-    const float target = juce::jlimit (0.0f, 1.08f, std::pow (10.0f, vuDb / 20.0f) / 1.4125f);
-    needle += (target - needle) * (target > needle ? 0.35f : 0.12f);
-    peakLamp = linearPeak > 0.89f ? 1.0f : peakLamp * 0.9f;
+    float target;
+    if (mode == Mode::duck)
+    {
+        // Like a compressor's GR meter: rests on 0 VU and swings left by the ducking in dB.
+        const float grDb = -juce::Decibels::gainToDecibels (juce::jmax (duckGain, 0.001f));
+        target = vuPosForDb (-grDb);
+    }
+    else
+    {
+        // 0 VU = -18 dBFS RMS.
+        const float vuDb = juce::Decibels::gainToDecibels (std::sqrt (juce::jmax (meanSquare, 0.0f)), -80.0f) + 18.0f;
+        target = juce::jmin (1.15f, vuPosForDb (vuDb));
+    }
+
+    // Damped mass-spring movement: ~300 ms to settle with ~1.5% overshoot, bounces off the end stops.
+    constexpr float wn = 13.0f, zeta = 0.78f;
+    const int steps = 4;
+    const float h = dt / (float) steps;
+    for (int i = 0; i < steps; ++i)
+    {
+        const float acc = wn * wn * (target - needle) - 2.0f * zeta * wn * velocity;
+        velocity += acc * h;
+        needle += velocity * h;
+        if (needle < -0.02f) { needle = -0.02f; velocity = -velocity * 0.25f; }
+        if (needle > 1.12f)  { needle = 1.12f;  velocity = -velocity * 0.25f; }
+    }
+
+    peakLamp = (mode != Mode::duck && peak > 0.89f) ? 1.0f : peakLamp * 0.92f;
     repaint();
 }
 
 void VUMeter::paint (juce::Graphics& g)
 {
     using namespace juce;
-    const auto face = drawBezel (g, getLocalBounds().toFloat(), 10.0f);
+    const auto face = getLocalBounds().toFloat().reduced ((float) wellInset);
 
     // Warm incandescent backlight from below
     ColourGradient light (juce::Colour (0xfffff3cf), face.getCentreX(), face.getBottom() + face.getHeight() * 0.1f,
@@ -163,61 +198,58 @@ void VUMeter::paint (juce::Graphics& g)
     Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (face.toNearestInt());
 
-    const float arcTop = face.getY() + 46.0f;
+    const float arcTop = face.getY() + 42.0f;
     const Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.42f);
     const float radius = pivot.y - arcTop;
     const float maxAngle = std::asin (jmin (0.95f, (face.getWidth() * 0.5f - 18.0f) / radius));
     auto angleFor = [maxAngle] (float pos) { return -maxAngle + 2.0f * maxAngle * pos; };
-    auto posForDb = [] (float db) { return std::pow (10.0f, db / 20.0f) / 1.4125f; };
     const Colour ink (0xff221a12), red (0xffc92a1c);
 
     Path blackArc, redArc;
-    blackArc.addCentredArc (pivot.x, pivot.y, radius, radius, 0.0f, angleFor (posForDb (-20.0f)), angleFor (posForDb (0.0f)), true);
-    redArc.addCentredArc (pivot.x, pivot.y, radius + 1.5f, radius + 1.5f, 0.0f, angleFor (posForDb (0.0f)), angleFor (1.0f), true);
+    blackArc.addCentredArc (pivot.x, pivot.y, radius, radius, 0.0f, angleFor (vuPosForDb (-20.0f)), angleFor (vuPosForDb (0.0f)), true);
+    redArc.addCentredArc (pivot.x, pivot.y, radius + 1.5f, radius + 1.5f, 0.0f, angleFor (vuPosForDb (0.0f)), angleFor (1.0f), true);
     g.setColour (ink);
     g.strokePath (blackArc, PathStrokeType (3.5f));
     g.setColour (red);
     g.strokePath (redArc, PathStrokeType (7.0f));
 
-    g.setFont (font (11.0f));
+    g.setFont (font (12.0f));
     for (float db : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
     {
-        const float a = angleFor (posForDb (db));
+        const float a = angleFor (vuPosForDb (db));
         g.setColour (db > 0.0f ? red : ink);
         g.drawLine (Line<float> (polar (pivot, radius + 1.0f, a), polar (pivot, radius + 9.0f, a)), 1.5f);
         if (db == -20.0f || db == -10.0f || db == -5.0f || db == -3.0f || db == 0.0f || db == 3.0f)
         {
             const auto text = (db > 0.0f ? "+" : "") + String ((int) db);
-            g.drawText (text, Rectangle<float> (28.0f, 12.0f).withCentre (polar (pivot, radius + 19.0f, a)), Justification::centred);
+            g.drawText (text, Rectangle<float> (28.0f, 13.0f).withCentre (polar (pivot, radius + 19.0f, a)), Justification::centred);
         }
     }
 
-    // Percentage sub-scale under the arc
-    g.setFont (font (8.0f));
+    g.setFont (font (9.0f));
     g.setColour (ink.withAlpha (0.75f));
     for (int pct : { 0, 20, 40, 60, 80, 100 })
     {
         const float a = angleFor ((float) pct / 100.0f / 1.4125f);
         g.drawLine (Line<float> (polar (pivot, radius - 2.0f, a), polar (pivot, radius - 7.0f, a)), 1.0f);
         if (pct % 50 == 0)
-            g.drawText (String (pct) + (pct == 100 ? "%" : ""), Rectangle<float> (30.0f, 10.0f).withCentre (polar (pivot, radius - 14.0f, a)), Justification::centred);
+            g.drawText (String (pct) + (pct == 100 ? "%" : ""), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 14.0f, a)), Justification::centred);
     }
 
+    const char* modeName = mode == Mode::input ? "INPUT" : mode == Mode::output ? "OUTPUT" : "ECHO DUCK";
     g.setColour (ink);
-    g.setFont (font (20.0f));
-    g.drawText ("VU", Rectangle<float> (face.getX(), face.getBottom() - 66.0f, face.getWidth(), 22.0f), Justification::centred);
-    g.setFont (font (9.0f));
-    g.setColour (ink.withAlpha (0.7f));
-    g.drawText (label, Rectangle<float> (face.getX(), face.getBottom() - 44.0f, face.getWidth(), 12.0f), Justification::centred);
+    g.setFont (font (24.0f, true));
+    g.drawText ("VU", Rectangle<float> (face.getX(), face.getBottom() - 70.0f, face.getWidth(), 26.0f), Justification::centred);
+    g.setFont (font (11.0f));
+    g.setColour (ink.withAlpha (0.75f));
+    g.drawText (modeName, Rectangle<float> (face.getX(), face.getBottom() - 46.0f, face.getWidth(), 13.0f), Justification::centred);
 
-    // Needle and its shadow on the face
     const float a = angleFor (needle);
     g.setColour (juce::Colours::black.withAlpha (0.18f));
     g.drawLine (Line<float> (pivot.translated (3.0f, 5.0f), polar (pivot, radius + 12.0f, a).translated (3.0f, 5.0f)), 2.2f);
     g.setColour (juce::Colour (0xff120d0a));
     g.drawLine (Line<float> (pivot, polar (pivot, radius + 12.0f, a)), 1.4f);
 
-    // Pivot cover
     auto dome = Rectangle<float> (face.getWidth() * 0.42f, 22.0f).withCentre ({ face.getCentreX(), face.getBottom() });
     g.setGradientFill (ColourGradient (juce::Colour (0xff3a3632), dome.getCentreX(), dome.getY(),
                                        juce::Colour (0xff0c0b0a), dome.getCentreX(), dome.getBottom(), false));
@@ -226,13 +258,13 @@ void VUMeter::paint (juce::Graphics& g)
     g.drawEllipse (dome.reduced (1.0f), 0.8f);
 
     // Shadows cast by the bezel, then the glass
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.5f), 0.0f, face.getY(),
-                                       juce::Colours::transparentBlack, 0.0f, face.getY() + 20.0f, false));
-    g.fillRect (face.withHeight (20.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.28f), face.getX(), 0.0f,
-                                       juce::Colours::transparentBlack, face.getX() + 12.0f, 0.0f, false));
-    g.fillRect (face.withWidth (12.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.28f), face.getRight(), 0.0f,
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.55f), 0.0f, face.getY(),
+                                       juce::Colours::transparentBlack, 0.0f, face.getY() + 22.0f, false));
+    g.fillRect (face.withHeight (22.0f));
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.3f), face.getX(), 0.0f,
+                                       juce::Colours::transparentBlack, face.getX() + 14.0f, 0.0f, false));
+    g.fillRect (face.withWidth (14.0f));
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.2f), face.getRight(), 0.0f,
                                        juce::Colours::transparentBlack, face.getRight() - 12.0f, 0.0f, false));
     g.fillRect (face.withTrimmedLeft (face.getWidth() - 12.0f));
 
@@ -242,11 +274,11 @@ void VUMeter::paint (juce::Graphics& g)
     glare.lineTo (face.getX() + face.getWidth() * 0.25f, face.getBottom());
     glare.lineTo (face.getX(), face.getBottom());
     glare.closeSubPath();
-    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.16f), face.getX(), face.getY(),
+    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.14f), face.getX(), face.getY(),
                                        juce::Colours::transparentWhite, face.getX() + face.getWidth() * 0.4f, face.getCentreY(), false));
     g.fillPath (glare);
 
-    drawGlassSmudges (g, face, 0.09f, label.length());
+    drawGlassSmudges (g, face, 0.09f, (int) mode + 1);
     drawJewel (g, { face.getRight() - 13.0f, face.getY() + 15.0f }, 3.5f, Palette::lampRed, peakLamp);
 }
 
@@ -272,49 +304,51 @@ void EchoScope::paint (juce::Graphics& g)
 {
     using namespace juce;
     ++frameCounter;
-    const auto inner = drawBezel (g, getLocalBounds().toFloat(), 10.0f);
+    const auto inner = getLocalBounds().toFloat().reduced ((float) wellInset);
     g.setColour (juce::Colour (0xff0b0b0a));
     g.fillRect (inner);
 
     const auto screen = inner.reduced (5.0f);
     Path tube;
     tube.addRoundedRectangle (screen, 18.0f);
+    const float brightness = info.power ? 1.0f : 0.25f;
 
     {
         Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (tube);
 
-        g.setGradientFill (ColourGradient (juce::Colour (0xff0f2318), screen.getCentreX(), screen.getCentreY(),
+        g.setGradientFill (ColourGradient (juce::Colour (0xff0f2318).withMultipliedBrightness (brightness), screen.getCentreX(), screen.getCentreY(),
                                            Palette::crtBack, screen.getX(), screen.getY(), true));
         g.fillRect (screen);
 
-        // Graticule
-        g.setColour (Palette::phosphor.withAlpha (0.09f));
+        g.setColour (Palette::phosphor.withAlpha (0.09f * brightness));
         for (int i = 1; i < 10; ++i)
             g.drawVerticalLine ((int) (screen.getX() + screen.getWidth() * (float) i / 10.0f), screen.getY(), screen.getBottom());
         for (int i = 1; i < 6; ++i)
             g.drawHorizontalLine ((int) (screen.getY() + screen.getHeight() * (float) i / 6.0f), screen.getX(), screen.getRight());
 
-        auto content = screen.reduced (14.0f, 8.0f);
-        auto top = content.removeFromTop (16.0f);
-        auto mapArea = content.removeFromBottom (52.0f);
-        content.removeFromBottom (4.0f);
+        if (info.power)
+        {
+            auto content = screen.reduced (14.0f, 8.0f);
+            auto top = content.removeFromTop (16.0f);
+            auto mapArea = content.removeFromBottom (52.0f);
+            content.removeFromBottom (4.0f);
 
-        g.setFont (mono (11.5f));
-        g.setColour (Palette::phosphor.withAlpha (0.6f));
-        g.drawText ("ECHO-SCOPE", top, Justification::centredLeft);
-        String timing = info.sync ? info.division + " = " + String (roundToInt (info.delayMs)) + " ms @ "
-                                        + String (info.bpm, 1) + " BPM"
-                                  : String (roundToInt (info.delayMs)) + " ms";
-        if (info.mode == 2)
-            timing << "  +" << roundToInt (info.offsetMs) << " R";
-        g.setColour (Palette::phosphor);
-        g.drawText (modeNames()[info.mode].toUpperCase() + "  " + timing, top, Justification::centredRight);
+            g.setFont (mono (12.0f));
+            g.setColour (Palette::phosphor.withAlpha (0.6f));
+            g.drawText ("ECHO-SCOPE", top, Justification::centredLeft);
+            String timing = info.sync ? info.division + " = " + String (roundToInt (info.delayMs)) + " ms @ "
+                                            + String (info.bpm, 1) + " BPM"
+                                      : String (roundToInt (info.delayMs)) + " ms";
+            if (info.mode == 2)
+                timing << "  +" << roundToInt (info.offsetMs) << " R";
+            g.setColour (Palette::phosphor);
+            g.drawText (modeNames()[info.mode].toUpperCase() + "  " + timing, top, Justification::centredRight);
 
-        paintHistory (g, content);
-        paintEchoMap (g, mapArea);
+            paintHistory (g, content);
+            paintEchoMap (g, mapArea);
+        }
 
-        // Tube curvature, scan lines and glass
         g.setGradientFill (ColourGradient (juce::Colours::transparentBlack, screen.getCentreX(), screen.getCentreY(),
                                            juce::Colours::black.withAlpha (0.65f), screen.getX(), screen.getY(), true));
         g.fillRect (screen);
@@ -379,7 +413,7 @@ void EchoScope::paintHistory (juce::Graphics& g, juce::Rectangle<float> area)
     g.fillPath (wetShape);
     glowStroke (g, wetShape, Palette::phosphor, 1.2f);
 
-    g.setFont (mono (10.0f));
+    g.setFont (mono (11.0f));
     g.setColour (Palette::phosphor.withAlpha (0.45f));
     g.drawText ("VOICE", area.withWidth (60.0f).withHeight (14.0f), Justification::centredLeft);
     g.setColour (Palette::phosphor);
@@ -419,7 +453,7 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
     const float midY = area.getCentreY();
     const float halfH = area.getHeight() * 0.5f - 6.0f;
 
-    g.setFont (mono (10.0f));
+    g.setFont (mono (11.0f));
     g.setColour (Palette::phosphor.withAlpha (0.6f));
     g.drawText ("L", labelArea.withTrimmedBottom (area.getHeight() * 0.5f), Justification::centred);
     g.drawText ("R", labelArea.withTrimmedTop (area.getHeight() * 0.5f), Justification::centred);
@@ -463,7 +497,7 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
     }
 
     auto status = area.removeFromRight (70.0f).removeFromTop (14.0f);
-    if (info.freeze && (frameCounter / 15) % 2 == 0)
+    if (info.freeze && (frameCounter / 30) % 2 == 0)
     {
         g.setColour (Palette::phosphor);
         g.drawText ("FREEZE", status, Justification::centredRight);
@@ -476,11 +510,11 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
 }
 
 //==============================================================================
-VoxSlapEditor::VoxSlapEditor (VoxSlapProcessor& p)
-    : AudioProcessorEditor (p), processor (p),
+Faceplate::Faceplate (VoxSlapProcessor& p)
+    : processor (p),
       modeKnob      (p.apvts, ParamID::mode,        "MODE",          KnobStyle::chicken),
-      timeKnob      (p.apvts, ParamID::timeMs,      "TIME",      KnobStyle::aluminium, "auto"),
-      divisionKnob  (p.apvts, ParamID::division,    "TIME",    KnobStyle::aluminium, "1/32||1/16|||1/8|||1/4||1/2"),
+      timeKnob      (p.apvts, ParamID::timeMs,      "TIME",          KnobStyle::aluminium, "auto"),
+      divisionKnob  (p.apvts, ParamID::division,    "TIME",          KnobStyle::aluminium, "1/32||1/16|||1/8|||1/4||1/2"),
       feedbackKnob  (p.apvts, ParamID::feedback,    "FEEDBACK",      KnobStyle::aluminium),
       driveKnob     (p.apvts, ParamID::drive,       "DRIVE",         KnobStyle::aluminium),
       driveTypeKnob (p.apvts, ParamID::driveType,   "CHARACTER",     KnobStyle::chicken),
@@ -497,9 +531,54 @@ VoxSlapEditor::VoxSlapEditor (VoxSlapProcessor& p)
       releaseKnob   (p.apvts, ParamID::duckRelease, "RELEASE",       KnobStyle::black, "auto"),
       outputKnob    (p.apvts, ParamID::output,      "OUTPUT",        KnobStyle::black, "-24|||+12")
 {
+    getProperties().set ("isFaceplate", true);
     setLookAndFeel (&lnf);
-    buildTextures();
 
+    topImage = juce::ImageCache::getFromMemory (BinaryData::faceplate_top_jpg, BinaryData::faceplate_top_jpgSize);
+    bottomImage = juce::ImageCache::getFromMemory (BinaryData::faceplate_bottom_jpg, BinaryData::faceplate_bottom_jpgSize);
+
+    // ---- Hardware ----
+    inputMeter.setMode (VUMeter::Mode::input);
+    outputMeter.setMode ((int) processor.apvts.state.getProperty (meterModeProp, 0) == 1 ? VUMeter::Mode::duck : VUMeter::Mode::output);
+    outputMeter.setTooltip ("Click to switch between OUTPUT level and ECHO DUCK (how much the echoes are pushed down)");
+    outputMeter.onClick = [this]
+    {
+        const bool duck = outputMeter.getMode() != VUMeter::Mode::duck;
+        outputMeter.setMode (duck ? VUMeter::Mode::duck : VUMeter::Mode::output);
+        processor.apvts.state.setProperty (meterModeProp, duck ? 1 : 0, nullptr);
+    };
+    for (auto* c : std::initializer_list<juce::Component*> { &inputMeter, &outputMeter, &scope })
+        addAndMakeVisible (c);
+
+    for (auto* k : { &modeKnob, &timeKnob, &divisionKnob, &feedbackKnob, &driveKnob, &driveTypeKnob, &duckKnob, &mixKnob,
+                     &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob, &modDepthKnob,
+                     &pitchKnob, &threshKnob, &releaseKnob, &outputKnob })
+        addAndMakeVisible (*k);
+
+    duckKnob.slider.setTooltip ("UNDER: echoes play under the voice.  AFTER: echoes hide while you sing and come out in the gaps.");
+    driveKnob.slider.setTooltip ("Distortion on the repeats only - the dry voice stays clean");
+
+    for (auto* t : { &syncToggle, &reverseToggle, &freezeToggle, &powerSwitch })
+        addAndMakeVisible (*t);
+    syncAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::sync, syncToggle);
+    reverseAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::reverse, reverseToggle);
+    freezeAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::freeze, freezeToggle);
+
+    // POWER = not bypassed
+    powerSwitch.getProperties().set ("sheet", "power");
+    powerSwitch.setTooltip ("Power: switch off to bypass the echo");
+    powerSwitch.setClickingTogglesState (true);
+    powerSwitch.onClick = [this]
+    {
+        if (auto* bypass = processor.apvts.getParameter (ParamID::bypass))
+        {
+            bypass->beginChangeGesture();
+            bypass->setValueNotifyingHost (powerSwitch.getToggleState() ? 0.0f : 1.0f);
+            bypass->endChangeGesture();
+        }
+    };
+
+    // ---- Toolbar ----
     addAndMakeVisible (presetBox);
     presetBox.setTextWhenNothingSelected ("- preset -");
     presetBox.onChange = [this]
@@ -508,88 +587,65 @@ VoxSlapEditor::VoxSlapEditor (VoxSlapProcessor& p)
             processor.presets.loadByIndex (id - 1);
     };
 
-    for (auto* b : { &prevButton, &nextButton, &saveButton, &deleteButton, &simpleButton, &advancedButton })
+    for (auto* b : { &prevButton, &nextButton, &saveButton, &deleteButton, &slotA, &slotB, &copyButton, &simpleButton, &advancedButton })
         addAndMakeVisible (*b);
     prevButton.onClick = [this] { stepPreset (-1); };
     nextButton.onClick = [this] { stepPreset (1); };
     saveButton.onClick = [this] { savePresetDialog(); };
     deleteButton.onClick = [this] { deletePresetDialog(); };
+    slotA.onClick = [this] { processor.presets.switchToSlot (0); };
+    slotB.onClick = [this] { processor.presets.switchToSlot (1); };
+    copyButton.onClick = [this] { processor.presets.copyActiveToOther(); };
+    slotA.setTooltip ("Compare: setting A");
+    slotB.setTooltip ("Compare: setting B");
+    copyButton.setTooltip ("Copy the current setting to the other slot");
     simpleButton.onClick = [this] { setAdvanced (false); };
     advancedButton.onClick = [this] { setAdvanced (true); };
-    saveButton.setTooltip ("Save current settings as a user preset");
-    deleteButton.setTooltip ("Move this user preset to the trash");
 
-    addAndMakeVisible (inputMeter);
-    addAndMakeVisible (outputMeter);
-    addAndMakeVisible (scope);
-
-    for (auto* k : { &modeKnob, &timeKnob, &divisionKnob, &feedbackKnob, &driveKnob, &driveTypeKnob, &duckKnob, &mixKnob,
-                     &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob, &modDepthKnob,
-                     &pitchKnob, &threshKnob, &releaseKnob, &outputKnob })
-        addAndMakeVisible (*k);
-
-    duckKnob.slider.setTooltip ("UNDER: echoes play under the voice.  AFTER: echoes hide while you sing and come out in the gaps.");
-    driveKnob.slider.setTooltip ("Distortion applied to the repeats only - the dry voice stays clean");
-
-    for (auto* t : { &syncToggle, &reverseToggle, &freezeToggle })
-        addAndMakeVisible (*t);
-    syncAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::sync, syncToggle);
-    reverseAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::reverse, reverseToggle);
-    freezeAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamID::freeze, freezeToggle);
+    addAndMakeVisible (sizeBox);
+    sizeBox.addItem ("100%", 100);
+    sizeBox.addItem ("125%", 125);
+    sizeBox.addItem ("150%", 150);
+    sizeBox.setSelectedId (juce::roundToInt (getScale() * 100.0f), juce::dontSendNotification);
+    sizeBox.onChange = [this] { setScale ((float) sizeBox.getSelectedId() / 100.0f); };
+    sizeBox.setTooltip ("Window size");
 
     refreshPresetList();
-    setAdvanced (isAdvanced());
-    timerCallback();
-    startTimerHz (30);
+    tick (0.0f);
 }
 
-VoxSlapEditor::~VoxSlapEditor()
+Faceplate::~Faceplate()
 {
-    stopTimer();
     setLookAndFeel (nullptr);
 }
 
-void VoxSlapEditor::buildTextures()
+bool Faceplate::isAdvanced() const { return (bool) processor.apvts.state.getProperty (advancedProp, false); }
+
+float Faceplate::getScale() const
 {
-    auto load = [] (const char* data, int size) { return juce::ImageCache::getFromMemory (data, size); };
-    woodTexture     = load (BinaryData::wood_cheeks_jpg, BinaryData::wood_cheeks_jpgSize);
-    burgundyTexture = load (BinaryData::panel_burgundy_jpg, BinaryData::panel_burgundy_jpgSize);
-    blackTexture    = load (BinaryData::panel_black_jpg, BinaryData::panel_black_jpgSize);
-    plateTexture    = load (BinaryData::plate_aluminium_jpg, BinaryData::plate_aluminium_jpgSize);
+    return juce::jlimit (1.0f, 1.5f, (float) (double) processor.apvts.state.getProperty (scaleProp, 1.0));
 }
 
-bool VoxSlapEditor::isAdvanced() const
-{
-    return (bool) processor.apvts.state.getProperty (advancedProp, false);
-}
-
-void VoxSlapEditor::setAdvanced (bool shouldBeAdvanced)
+void Faceplate::setAdvanced (bool shouldBeAdvanced)
 {
     processor.apvts.state.setProperty (advancedProp, shouldBeAdvanced, nullptr);
-    simpleButton.setToggleState (! shouldBeAdvanced, juce::dontSendNotification);
-    advancedButton.setToggleState (shouldBeAdvanced, juce::dontSendNotification);
-
-    for (auto* c : std::initializer_list<juce::Component*> { &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob,
-                                                             &modDepthKnob, &pitchKnob, &threshKnob, &releaseKnob,
-                                                             &outputKnob, &reverseToggle, &freezeToggle })
-        c->setVisible (shouldBeAdvanced);
-
-    const int h = topUnitHeight + (shouldBeAdvanced ? bottomUnitHeight : 0);
-    if (getHeight() != h || getWidth() != editorWidth)
-        setSize (editorWidth, h);
-    else
-        resized();
-    repaint();
+    if (onLayoutChanged) onLayoutChanged();
 }
 
-void VoxSlapEditor::refreshPresetList()
+void Faceplate::setScale (float s)
+{
+    processor.apvts.state.setProperty (scaleProp, s, nullptr);
+    if (onLayoutChanged) onLayoutChanged();
+}
+
+void Faceplate::refreshPresetList()
 {
     auto& pm = processor.presets;
     const auto& factory = getFactoryPresets();
     const auto users = pm.getUserPresetNames();
 
     presetBox.clear (juce::dontSendNotification);
-    presetBox.addSectionHeading ("FACTORY");
+    presetBox.addSectionHeading ("Factory");
     int id = 1;
     for (auto& f : factory)
         presetBox.addItem (f.name, id++);
@@ -597,7 +653,7 @@ void VoxSlapEditor::refreshPresetList()
     if (! users.isEmpty())
     {
         presetBox.addSeparator();
-        presetBox.addSectionHeading ("USER");
+        presetBox.addSectionHeading ("User");
         for (auto& u : users)
             presetBox.addItem (u, id++);
     }
@@ -613,7 +669,7 @@ void VoxSlapEditor::refreshPresetList()
     deleteButton.setEnabled (index >= (int) factory.size());
 }
 
-void VoxSlapEditor::stepPreset (int delta)
+void Faceplate::stepPreset (int delta)
 {
     const int count = processor.presets.getAllPresetNames().size();
     const int current = juce::jmax (0, processor.presets.getCurrentIndex());
@@ -621,15 +677,15 @@ void VoxSlapEditor::stepPreset (int delta)
     refreshPresetList();
 }
 
-void VoxSlapEditor::savePresetDialog()
+void Faceplate::savePresetDialog()
 {
     auto* window = new juce::AlertWindow ("Save preset", "Name for your preset:", juce::MessageBoxIconType::NoIcon, this);
     window->setLookAndFeel (&lnf);
     window->addTextEditor ("name", processor.presets.getCurrentName());
-    window->addButton ("SAVE", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    window->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
-    juce::Component::SafePointer<VoxSlapEditor> safeThis (this);
+    juce::Component::SafePointer<Faceplate> safeThis (this);
     window->enterModalState (true, juce::ModalCallbackFunction::create ([safeThis, window] (int result)
     {
         if (result == 1 && safeThis != nullptr)
@@ -640,13 +696,13 @@ void VoxSlapEditor::savePresetDialog()
     }), true);
 }
 
-void VoxSlapEditor::deletePresetDialog()
+void Faceplate::deletePresetDialog()
 {
     const auto name = processor.presets.getCurrentName();
     if (! processor.presets.getUserPresetNames().contains (name))
         return;
 
-    juce::Component::SafePointer<VoxSlapEditor> safeThis (this);
+    juce::Component::SafePointer<Faceplate> safeThis (this);
     auto options = juce::MessageBoxOptions()
                        .withIconType (juce::MessageBoxIconType::QuestionIcon)
                        .withTitle ("Delete preset")
@@ -665,13 +721,15 @@ void VoxSlapEditor::deletePresetDialog()
     });
 }
 
-void VoxSlapEditor::timerCallback()
+void Faceplate::tick (float dt)
 {
-    inputMeter.setPeak (processor.inputPeak.exchange (0.0f));
-    outputMeter.setPeak (processor.outputPeak.exchange (0.0f));
+    auto& s = processor.apvts;
+    const bool power = s.getRawParameterValue (ParamID::bypass)->load() < 0.5f;
+
+    inputMeter.update (processor.inputMeanSquare.load(), processor.inputPeak.exchange (0.0f), 1.0f, dt);
+    outputMeter.update (processor.outputMeanSquare.load(), processor.outputPeak.exchange (0.0f), processor.duckGain.load(), dt);
     processor.scope.popAll ([this] (float dry, float wet) { scope.pushHistory (dry, wet); });
 
-    auto& s = processor.apvts;
     const int mode = (int) s.getRawParameterValue (ParamID::mode)->load();
     const bool sync = s.getRawParameterValue (ParamID::sync)->load() > 0.5f;
 
@@ -686,6 +744,7 @@ void VoxSlapEditor::timerCallback()
     info.sync = sync;
     info.reverse = s.getRawParameterValue (ParamID::reverse)->load() > 0.5f;
     info.freeze = s.getRawParameterValue (ParamID::freeze)->load() > 0.5f;
+    info.power = power;
     info.division = divisionNames()[(int) s.getRawParameterValue (ParamID::division)->load()];
     scope.setInfo (info);
 
@@ -693,198 +752,162 @@ void VoxSlapEditor::timerCallback()
     divisionKnob.setVisible (sync);
     offsetKnob.setAlpha (mode == 2 ? 1.0f : 0.45f);
 
+    // Switch levers travel through the in-between frames instead of jumping.
+    if (powerSwitch.getToggleState() != power)
+        powerSwitch.setToggleState (power, juce::dontSendNotification);
+    for (auto* t : { &syncToggle, &reverseToggle, &freezeToggle, &powerSwitch })
+    {
+        const float target = t->getToggleState() ? 0.0f : 1.0f;
+        auto& props = t->getProperties();
+        const float current = props.contains ("anim") ? (float) props["anim"] : target;
+        const float next = dt <= 0.0f ? target
+                                      : (current < target ? juce::jmin (target, current + dt / 0.06f)
+                                                          : juce::jmax (target, current - dt / 0.06f));
+        if (! props.contains ("anim") || next != current)
+        {
+            props.set ("anim", next);
+            t->repaint();
+        }
+    }
+
+    const int slot = processor.presets.getActiveSlot();
+    slotA.setToggleState (slot == 0, juce::dontSendNotification);
+    slotB.setToggleState (slot == 1, juce::dontSendNotification);
+    copyButton.setButtonText (slot == 0 ? "A > B" : "B > A");
+    simpleButton.setToggleState (! isAdvanced(), juce::dontSendNotification);
+    advancedButton.setToggleState (isAdvanced(), juce::dontSendNotification);
+
     if (processor.presets.getCurrentName() != shownPresetName
         || processor.presets.getUserPresetNames().size() != shownPresetCount)
         refreshPresetList();
 
-    if (isAdvanced() != advancedButton.getToggleState())
-        setAdvanced (isAdvanced());
+    if (! getProperties().contains ("powerShown") || power != (bool) getProperties()["powerShown"])
+    {
+        getProperties().set ("powerShown", power);
+        repaint (juce::Rectangle<int> (800, topHeight - 50, 200, 50));
+    }
 }
 
 //==============================================================================
-void VoxSlapEditor::paintUnit (juce::Graphics& g, juce::Rectangle<int> unit, const juce::Image& texture)
+void Faceplate::paintGroupLabel (juce::Graphics& g, juce::Rectangle<int> span, const juce::String& title)
 {
     using namespace juce;
-    const auto r = unit.toFloat();
-    g.drawImage (texture, r);
-
-    // Overhead studio light: brighter towards the top.
-    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.07f), r.getCentreX(), r.getY(),
-                                       juce::Colours::black.withAlpha (0.22f), r.getCentreX(), r.getBottom(), false));
-    g.fillRect (r);
-
-    // Folded edge bevel
-    g.setColour (juce::Colours::white.withAlpha (0.22f));
-    g.drawLine (r.getX(), r.getY() + 0.5f, r.getRight(), r.getY() + 0.5f, 1.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.7f));
-    g.drawLine (r.getX(), r.getBottom() - 1.0f, r.getRight(), r.getBottom() - 1.0f, 2.0f);
-
-    const float inset = 13.0f;
-    drawScrew (g, { r.getX() + inset, r.getY() + inset }, 5.5f, 0.35f);
-    drawScrew (g, { r.getRight() - inset, r.getY() + inset }, 5.5f, 1.1f);
-    drawScrew (g, { r.getX() + inset, r.getBottom() - inset }, 5.5f, 0.8f);
-    drawScrew (g, { r.getRight() - inset, r.getBottom() - inset }, 5.5f, 0.1f);
-}
-
-void VoxSlapEditor::paintGroupLabel (juce::Graphics& g, juce::Rectangle<int> span, const juce::String& title)
-{
-    using namespace juce;
-    const auto f = font (10.5f);
+    const auto f = font (12.5f);
     const float tw = GlyphArrangement::getStringWidth (f, title) + 14.0f;
     const auto r = span.toFloat().reduced (10.0f, 0.0f);
     const float y = r.getCentreY();
     const float cx = r.getCentreX();
 
-    g.setColour (Palette::silkscreen.withAlpha (0.8f));
-    g.drawLine (r.getX(), y, cx - tw * 0.5f, y, 1.0f);
-    g.drawLine (cx + tw * 0.5f, y, r.getRight(), y, 1.0f);
-    g.drawLine (r.getX(), y, r.getX(), y + 5.0f, 1.0f);
-    g.drawLine (r.getRight(), y, r.getRight(), y + 5.0f, 1.0f);
+    setInk (g, Palette::silkscreen.withAlpha (0.85f));
+    g.fillRect (Rectangle<float> (r.getX(), y - 0.5f, cx - tw * 0.5f - r.getX(), 1.1f));
+    g.fillRect (Rectangle<float> (cx + tw * 0.5f, y - 0.5f, r.getRight() - cx - tw * 0.5f, 1.1f));
+    g.fillRect (Rectangle<float> (r.getX(), y - 0.5f, 1.1f, 5.5f));
+    g.fillRect (Rectangle<float> (r.getRight() - 1.1f, y - 0.5f, 1.1f, 5.5f));
     g.setFont (f);
-    g.drawText (title, Rectangle<float> (tw, 14.0f).withCentre ({ cx, y }), Justification::centred);
+    g.drawText (title, Rectangle<float> (tw, 15.0f).withCentre ({ cx, y }), Justification::centred);
 }
 
-void VoxSlapEditor::paint (juce::Graphics& g)
+void Faceplate::paint (juce::Graphics& g)
 {
     using namespace juce;
-    g.fillAll (juce::Colours::black);
-
-    // Wooden side cheeks
-    const int h = getHeight();
-    for (int side = 0; side < 2; ++side)
-    {
-        const Rectangle<int> cheek (side == 0 ? 0 : getWidth() - cheekWidth, 0, cheekWidth, h);
-        const int sw = woodTexture.getWidth() / 2;
-        g.drawImage (woodTexture, cheek.getX(), 0, cheekWidth, h, side * sw, 0, sw, juce::jmin (woodTexture.getHeight(), h * 2));
-        const auto cf = cheek.toFloat();
-        ColourGradient varnish (juce::Colours::black.withAlpha (0.45f), cf.getX(), 0.0f,
-                                juce::Colours::black.withAlpha (0.45f), cf.getRight(), 0.0f, false);
-        varnish.addColour (0.42, juce::Colours::white.withAlpha (0.10f));
-        varnish.addColour (0.55, juce::Colours::transparentWhite);
-        g.setGradientFill (varnish);
-        g.fillRect (cf);
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRect (side == 0 ? cf.withTrimmedLeft (cf.getWidth() - 3.0f) : cf.withWidth (3.0f));
-    }
-
-    paintUnit (g, topUnit, burgundyTexture);
+    g.setImageResamplingQuality (Graphics::highResamplingQuality);
+    g.drawImage (topImage, Rectangle<float> (0.0f, 0.0f, (float) width, (float) topHeight));
     if (isAdvanced())
-        paintUnit (g, bottomUnit, blackTexture);
+        g.drawImage (bottomImage, Rectangle<float> (0.0f, (float) topHeight, (float) width, (float) bottomHeight));
 
-    // Brushed aluminium name plate
+    // Name plate: printed (not embossed) wordmark next to the rendered emblem
     {
         const auto plate = namePlate.toFloat();
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillRoundedRectangle (plate.expanded (2.0f).translated (0.0f, 1.5f), 4.0f);
-        g.drawImage (plateTexture, plate);
-        ColourGradient sheen (juce::Colours::white.withAlpha (0.12f), plate.getX(), plate.getY(),
-                              juce::Colours::black.withAlpha (0.18f), plate.getX(), plate.getBottom(), false);
-        sheen.addColour (0.45, juce::Colours::white.withAlpha (0.20f));
-        g.setGradientFill (sheen);
-        g.fillRect (plate);
-        g.setColour (juce::Colours::white.withAlpha (0.55f));
-        g.drawLine (plate.getX(), plate.getY() + 0.5f, plate.getRight(), plate.getY() + 0.5f, 1.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.6f));
-        g.drawRect (plate, 1.0f);
-
-        drawScrew (g, { plate.getX() + 13.0f, plate.getCentreY() }, 5.0f, 0.6f);
-        drawScrew (g, { plate.getRight() - 13.0f, plate.getCentreY() }, 5.0f, 1.3f);
-
-        // Engraved wordmark: dark fill with a light lower edge
-        auto text = [&] (const String& s, Rectangle<float> r, const Font& f)
-        {
-            g.setFont (f);
-            g.setColour (juce::Colours::white.withAlpha (0.65f));
-            g.drawText (s, r.translated (0.0f, 1.0f), Justification::centredLeft);
-            g.setColour (Palette::engraved);
-            g.drawText (s, r, Justification::centredLeft);
-        };
-        const float lx = plate.getX() + 32.0f;
-        text ("VOXSLAP", { lx, plate.getY() + 6.0f, 240.0f, 30.0f }, font (27.0f).withExtraKerningFactor (0.2f));
-        text ("VOCAL SLAPBACK ECHO   MODEL VS-1", { lx + 1.0f, plate.getY() + 36.0f, 260.0f, 14.0f },
-              font (9.5f).withExtraKerningFactor (0.18f));
+        setInk (g, Palette::engraved.withAlpha (0.92f));
+        g.setFont (font (36.0f, true).withExtraKerningFactor (0.16f));
+        g.drawText ("VOXSLAP", Rectangle<float> (plate.getX() + 86.0f, plate.getY() + 4.0f, 300.0f, plate.getHeight() - 8.0f),
+                    Justification::centredLeft);
+        g.setFont (font (14.0f, true).withExtraKerningFactor (0.22f));
+        const auto right = Rectangle<float> (plate.getRight() - 360.0f, plate.getY() + 12.0f, 330.0f, 18.0f);
+        g.drawText ("STUDIO VOCAL ECHO", right, Justification::centredRight);
+        g.setFont (font (11.5f).withExtraKerningFactor (0.25f));
+        g.drawText ("MODEL VS-1   -   SLAPBACK / DOUBLER", right.translated (0.0f, 18.0f), Justification::centredRight);
     }
 
     for (auto& [span, title] : groupLabels)
         paintGroupLabel (g, span, title);
 
-    // Footer silkscreen + power jewel
+    // Footer: maker's line, power switch with lamp
     {
-        const auto footer = Rectangle<float> ((float) topUnit.getX() + 34.0f, (float) topUnit.getBottom() - 30.0f,
-                                              (float) topUnit.getWidth() - 68.0f, 20.0f);
-        g.setFont (font (9.5f).withExtraKerningFactor (0.25f));
-        g.setColour (Palette::silkscreen.withAlpha (0.75f));
+        const bool power = processor.apvts.getRawParameterValue (ParamID::bypass)->load() < 0.5f;
+        const auto footer = Rectangle<float> (60.0f, (float) topHeight - 34.0f, (float) width - 120.0f, 20.0f);
+        setInk (g, Palette::silkscreen.withAlpha (0.8f));
+        g.setFont (font (11.0f).withExtraKerningFactor (0.28f));
         g.drawText ("HOMEBREW AUDIO  -  STUDIO ECHO UNIT  -  SER. NO. 0001", footer, Justification::centredLeft);
-        g.drawText ("POWER", footer.withTrimmedRight (34.0f), Justification::centredRight);
-        drawJewel (g, { footer.getRight() - 12.0f, footer.getCentreY() }, 6.5f, Palette::lampRed, 1.0f);
+        g.setFont (font (12.0f).withExtraKerningFactor (0.2f));
+        g.drawText ("POWER", Rectangle<float> (footer.getRight() - 170.0f, footer.getY(), 60.0f, footer.getHeight()), Justification::centredRight);
+        drawJewel (g, { footer.getRight() - 4.0f, footer.getCentreY() }, 6.5f, Palette::lampRed, power ? 1.0f : 0.0f);
     }
 
     if (isAdvanced())
     {
-        g.setFont (font (9.0f).withExtraKerningFactor (0.25f));
-        g.setColour (Palette::silkscreen.withAlpha (0.55f));
-        g.drawText ("VS-1X  EXPANDER", bottomUnit.toFloat().withTrimmedRight (34.0f).withTrimmedBottom (6.0f).removeFromBottom (14.0f),
+        setInk (g, Palette::silkscreen.withAlpha (0.6f));
+        g.setFont (font (11.0f).withExtraKerningFactor (0.28f));
+        g.drawText ("VS-1X  EXPANDER", Rectangle<float> (60.0f, (float) (topHeight + bottomHeight) - 32.0f, (float) width - 120.0f, 16.0f),
                     Justification::centredRight);
     }
+
+    // Software toolbar
+    const auto bar = Rectangle<float> (0.0f, (float) (getHeight() - toolbarHeight), (float) width, (float) toolbarHeight);
+    g.setColour (Palette::barBack);
+    g.fillRect (bar);
+    g.setColour (juce::Colours::black);
+    g.fillRect (bar.withHeight (1.0f));
+    g.setColour (Palette::barDim);
+    g.setFont (uiFont (12.5f));
+    g.drawText ("PRESET", bar.withX (14.0f).withWidth (52.0f), Justification::centredLeft);
+    g.drawText ("COMPARE", bar.withX (502.0f).withWidth (66.0f), Justification::centredLeft);
 }
 
-void VoxSlapEditor::resized()
+void Faceplate::paintOverChildren (juce::Graphics& g)
+{
+    using namespace juce;
+    // One studio light over the whole unit: soft vignette and a slightly warm cast,
+    // so the rendered parts and the live-drawn parts read as one photograph.
+    const auto units = getLocalBounds().withTrimmedBottom (toolbarHeight).toFloat();
+    ColourGradient vignette (juce::Colours::transparentBlack, units.getCentreX(), units.getY() + units.getHeight() * 0.42f,
+                             juce::Colours::black.withAlpha (0.30f), units.getX(), units.getY(), true);
+    vignette.addColour (0.6, juce::Colours::transparentBlack);
+    g.setGradientFill (vignette);
+    g.fillRect (units);
+    g.setColour (juce::Colour (0xffff9a3c).withAlpha (0.035f));
+    g.fillRect (units);
+}
+
+void Faceplate::resized()
 {
     groupLabels.clear();
-    topUnit = { cheekWidth, 0, editorWidth - 2 * cheekWidth, topUnitHeight };
-    bottomUnit = { cheekWidth, topUnitHeight, editorWidth - 2 * cheekWidth, bottomUnitHeight };
 
-    // ---- Name plate ----
-    namePlate = { topUnit.getX() + 18, 16, topUnit.getWidth() - 36, 60 };
-    {
-        auto p = namePlate.reduced (30, 15);
-        p.removeFromLeft (262);
-        prevButton.setBounds (p.removeFromLeft (30));
-        p.removeFromLeft (6);
-        presetBox.setBounds (p.removeFromLeft (220));
-        p.removeFromLeft (6);
-        nextButton.setBounds (p.removeFromLeft (30));
-        p.removeFromLeft (12);
-        saveButton.setBounds (p.removeFromLeft (58));
-        p.removeFromLeft (6);
-        deleteButton.setBounds (p.removeFromLeft (48));
+    inputMeter.setBounds (inputWell);
+    scope.setBounds (scopeWell);
+    outputMeter.setBounds (outputWell);
 
-        advancedButton.setBounds (p.removeFromRight (96));
-        p.removeFromRight (4);
-        simpleButton.setBounds (p.removeFromRight (74));
-    }
-
-    auto inner = topUnit.reduced (30, 0);
-
-    // ---- Meter bridge ----
-    {
-        auto m = juce::Rectangle<int> (inner.getX(), 92, inner.getWidth(), 196);
-        inputMeter.setBounds (m.removeFromLeft (214));
-        outputMeter.setBounds (m.removeFromRight (214));
-        scope.setBounds (m.reduced (14, 0));
-    }
+    const int innerX = 56, innerW = 888;
 
     // ---- Main controls ----
     {
-        auto row = juce::Rectangle<int> (inner.getX(), 300, inner.getWidth(), 210);
+        auto row = juce::Rectangle<int> (innerX, 300, innerW, 208);
         auto labels = row.removeFromTop (16);
         row.removeFromTop (2);
-
-        auto take = [&] (int w) { labels.removeFromLeft (0); return row.removeFromLeft (w); };
         const int x0 = row.getX();
 
-        modeKnob.setBounds (take (112));
+        modeKnob.setBounds (row.removeFromLeft (112));
         const int delayStart = row.getX();
-        auto timeArea = take (136);
+        auto timeArea = row.removeFromLeft (136);
         timeKnob.setBounds (timeArea);
         divisionKnob.setBounds (timeArea);
-        syncToggle.setBounds (take (58).withSizeKeepingCentre (58, 120));
-        feedbackKnob.setBounds (take (112));
+        syncToggle.setBounds (row.removeFromLeft (58).withSizeKeepingCentre (58, 120));
+        feedbackKnob.setBounds (row.removeFromLeft (112));
         const int delayEnd = row.getX();
-        driveKnob.setBounds (take (112));
-        driveTypeKnob.setBounds (take (120));
+        driveKnob.setBounds (row.removeFromLeft (112));
+        driveTypeKnob.setBounds (row.removeFromLeft (120));
         const int satEnd = row.getX();
-        duckKnob.setBounds (take (122));
+        duckKnob.setBounds (row.removeFromLeft (122));
         mixKnob.setBounds (row);
 
         const int y = labels.getY(), lh = labels.getHeight();
@@ -894,16 +917,22 @@ void VoxSlapEditor::resized()
         groupLabels.push_back ({ { satEnd, y, row.getRight() - satEnd, lh }, "BLEND" });
     }
 
-    if (! isAdvanced())
-        return;
+    powerSwitch.setBounds (838, topHeight - 50, 64, 52);
 
-    // ---- Expander unit ----
+    // ---- Expander ----
+    const bool advanced = isAdvanced();
+    for (auto* c : std::initializer_list<juce::Component*> { &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob,
+                                                             &modDepthKnob, &pitchKnob, &threshKnob, &releaseKnob,
+                                                             &outputKnob, &reverseToggle, &freezeToggle })
+        c->setVisible (advanced);
+
+    if (advanced)
     {
-        auto row = juce::Rectangle<int> (inner.getX(), bottomUnit.getY() + 18, inner.getWidth(), 160);
+        auto row = juce::Rectangle<int> (innerX, topHeight + 18, innerW, 160);
         auto labels = row.removeFromTop (16);
         row.removeFromTop (2);
         const int y = labels.getY(), lh = labels.getHeight();
-        const int kw = 74, tw = 54;
+        const int kw = 74, tw = 60;
 
         auto group = [&] (std::initializer_list<juce::Component*> comps, std::initializer_list<int> widths, const juce::String& title)
         {
@@ -920,11 +949,67 @@ void VoxSlapEditor::resized()
         group ({ &modRateKnob, &modDepthKnob }, { kw, kw }, "WOBBLE");
         group ({ &pitchKnob }, { kw }, "SHIFT");
         group ({ &threshKnob, &releaseKnob }, { kw, kw }, "DUCK");
-        group ({ &reverseToggle, &freezeToggle }, { tw + 6, tw + 6 }, "FX");
+        group ({ &reverseToggle, &freezeToggle }, { tw, tw }, "FX");
         outputKnob.setBounds (row);
         groupLabels.push_back ({ { row.getX(), y, row.getWidth(), lh }, "OUT" });
 
         for (auto* t : { &reverseToggle, &freezeToggle })
-            t->setBounds (t->getBounds().withSizeKeepingCentre (tw + 6, 120));
+            t->setBounds (t->getBounds().withSizeKeepingCentre (tw, 120));
     }
+
+    // ---- Toolbar ----
+    auto bar = juce::Rectangle<int> (0, getHeight() - toolbarHeight, width, toolbarHeight).reduced (10, 7);
+    bar.removeFromLeft (56);
+    prevButton.setBounds (bar.removeFromLeft (28));
+    bar.removeFromLeft (4);
+    presetBox.setBounds (bar.removeFromLeft (236));
+    bar.removeFromLeft (4);
+    nextButton.setBounds (bar.removeFromLeft (28));
+    bar.removeFromLeft (10);
+    saveButton.setBounds (bar.removeFromLeft (56));
+    bar.removeFromLeft (4);
+    deleteButton.setBounds (bar.removeFromLeft (62));
+    bar.removeFromLeft (84);
+    slotA.setBounds (bar.removeFromLeft (30));
+    bar.removeFromLeft (3);
+    slotB.setBounds (bar.removeFromLeft (30));
+    bar.removeFromLeft (4);
+    copyButton.setBounds (bar.removeFromLeft (56));
+
+    sizeBox.setBounds (bar.removeFromRight (78));
+    bar.removeFromRight (14);
+    advancedButton.setBounds (bar.removeFromRight (86));
+    bar.removeFromRight (3);
+    simpleButton.setBounds (bar.removeFromRight (66));
+
+    repaint();
+}
+
+//==============================================================================
+VoxSlapEditor::VoxSlapEditor (VoxSlapProcessor& p)
+    : AudioProcessorEditor (p), faceplate (p)
+{
+    addAndMakeVisible (faceplate);
+    faceplate.onLayoutChanged = [this] { applyLayout(); };
+    applyLayout();
+    startTimerHz (60);
+}
+
+VoxSlapEditor::~VoxSlapEditor()
+{
+    stopTimer();
+}
+
+void VoxSlapEditor::applyLayout()
+{
+    const float s = faceplate.getScale();
+    faceplate.setBounds (0, 0, Faceplate::width, faceplate.getBaseHeight());
+    faceplate.setTransform (juce::AffineTransform::scale (s));
+    setSize (juce::roundToInt (Faceplate::width * s), juce::roundToInt ((float) faceplate.getBaseHeight() * s));
+    faceplate.resized();
+}
+
+void VoxSlapEditor::timerCallback()
+{
+    faceplate.tick (1.0f / 60.0f);
 }

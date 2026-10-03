@@ -49,14 +49,25 @@
   на последнем слове).
 - OUTPUT: общий уровень на выходе.
 
-Двойной клик по любой ручке возвращает значение по умолчанию.
+**Приёмы управления**
+- Двойной клик или Alt+клик по ручке — значение по умолчанию.
+- Shift + перетаскивание — тонкая подстройка.
+- Клик по правому VU-метру переключает его между OUTPUT (уровень выхода) и ECHO DUCK
+  (насколько эхо «прячется» под голос).
+- Тумблер POWER внизу справа — обход эффекта (то же, что кнопка bypass в DAW).
+
+**Нижняя панель инструментов**
+- Пресеты: список, стрелки, Save / Delete.
+- COMPARE: A / B — две настройки для сравнения, A > B копирует текущую в другую.
+- Simple / Advanced — показать или скрыть блок-расширитель.
+- 100% / 125% / 150% — размер окна.
 
 ## Пресеты
 16 заводских пресетов, включая **Cupsize Slap**, Classic 50s Slapback, Phone Slap, Ping-Pong,
 Wide Double, Lo-Fi Tape Echo, Dark Throw (эхо только после фраз), Radio Ghost, Reverse Swell,
 Octave Up Echo, Dub Feedback и другие.
 
-Кнопка **SAVE** сохраняет ваш пресет, **DEL** удаляет его в корзину.
+Кнопка **Save** сохраняет ваш пресет, **Delete** удаляет его в корзину.
 Свои пресеты лежат в `Документы/VoxSlap/Presets/` (файлы `.vspreset`), ими можно делиться с друзьями.
 
 ---
@@ -88,5 +99,6 @@ cmake --build build --config Release
 ## Текстуры
 Текстуры интерфейса запечены скриптом `tools/make_textures.py` из бесплатных (CC0) фотосканов
 [ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003, Fingerprints002.
-Ручки, тумблеры и клавиши отрендерены в Blender скриптом `tools/render_controls.py`
-(120 кадров поворота на ручку) и собраны в спрайты `tools/pack_controls.py`.
+Лицевые панели (`tools/render_faceplate.py`), ручки и тумблеры (`tools/render_controls.py`, 120 кадров
+поворота на ручку) отрендерены в Blender; спрайты собирает `tools/pack_controls.py`.
+Шрифты Barlow / Barlow Condensed и Share Tech Mono — SIL Open Font License (`Resources/fonts/OFL*.txt`).

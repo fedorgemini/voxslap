@@ -119,9 +119,48 @@ void PresetManager::setParam (const juce::String& id, float realValue)
 
 void PresetManager::resetToDefaults()
 {
+    // The power switch is not part of a preset.
     for (auto* p : state.processor.getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-            setParam (rp->getParameterID(), rp->convertFrom0to1 (rp->getDefaultValue()));
+            if (rp->getParameterID() != ParamID::bypass)
+                setParam (rp->getParameterID(), rp->convertFrom0to1 (rp->getDefaultValue()));
+}
+
+juce::ValueTree PresetManager::captureParameters() const
+{
+    juce::ValueTree t ("Params");
+    for (auto* p : state.processor.getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (rp->getParameterID() != ParamID::bypass)
+                t.setProperty (rp->getParameterID(), rp->convertFrom0to1 (rp->getValue()), nullptr);
+    t.setProperty ("presetName", getCurrentName(), nullptr);
+    return t;
+}
+
+void PresetManager::applyParameters (const juce::ValueTree& t)
+{
+    for (int i = 0; i < t.getNumProperties(); ++i)
+    {
+        const auto id = t.getPropertyName (i).toString();
+        if (state.getParameter (id) != nullptr)
+            setParam (id, (float) t.getProperty (id));
+    }
+    setCurrentName (t.getProperty ("presetName", getCurrentName()).toString());
+}
+
+void PresetManager::switchToSlot (int slot)
+{
+    if (slot == activeSlot || ! juce::isPositiveAndBelow (slot, 2))
+        return;
+    slots[(size_t) activeSlot] = captureParameters();
+    if (slots[(size_t) slot].isValid())
+        applyParameters (slots[(size_t) slot]);
+    activeSlot = slot;
+}
+
+void PresetManager::copyActiveToOther()
+{
+    slots[(size_t) (1 - activeSlot)] = captureParameters();
 }
 
 void PresetManager::loadFactoryPreset (int index)
@@ -153,7 +192,7 @@ bool PresetManager::loadUserPreset (const juce::String& name)
     for (auto child : tree)
     {
         auto id = child.getProperty ("id").toString();
-        if (auto* p = state.getParameter (id))
+        if (auto* p = state.getParameter (id); p != nullptr && id != ParamID::bypass)
             setParam (id, p->convertFrom0to1 (p->convertTo0to1 ((float) child.getProperty ("value"))));
     }
 

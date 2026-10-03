@@ -88,7 +88,7 @@ alu = load("Metal011", "Color")
 plate_w, plate_h = UNIT_W - 36 * S, 60 * S
 strip = tile(alu, plate_w, plate_h, (300, 0))
 strip = strip / strip.mean()
-save(np.clip(strip[..., None] * np.array([0.73, 0.725, 0.70], np.float32), 0, 1), "plate_aluminium.jpg")
+save(np.clip(strip[..., None] * np.array([0.56, 0.556, 0.54], np.float32), 0, 1), "plate_aluminium.jpg")
 
 # Walnut cheeks: rotate so the grain runs vertically, take two strips (left/right cheek)
 wood = np.rot90(load("Wood066", "Color", "RGB"))
@@ -102,3 +102,10 @@ prints = load("Fingerprints002", "Opacity")
 img = Image.fromarray((prints * 255).astype(np.uint8)).resize((512, 512), Image.LANCZOS)
 img.save(os.path.join(OUT, "glass_smudges.jpg"), quality=85)
 print("glass_smudges.jpg", img.size)
+
+# Wear mask for silkscreen ink: mostly opaque, with small rubbed-off spots and hairline scratches.
+chips = Image.fromarray((chips_src * 255).astype(np.uint8)).resize((512, 512), Image.LANCZOS)
+c = np.asarray(chips, dtype=np.float32) / 255.0
+ink = np.clip(1.0 - 0.85 * c, 0.0, 1.0) * (0.9 + 0.1 * load("PaintedMetal004", "Roughness")[:512, :512])
+Image.fromarray((np.clip(ink, 0, 1) * 255).astype(np.uint8)).save(os.path.join(OUT, "ink_wear.png"), optimize=True)
+print("ink_wear.png", (512, 512))

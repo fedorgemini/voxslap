@@ -35,18 +35,22 @@ juce_add_plugin(VoxSlap
     VST3_CATEGORIES Fx Delay
     AU_MAIN_TYPE kAudioUnitType_Effect)
 
-# UI art: photo textures (tools/make_textures.py) and Blender-rendered controls (tools/render_controls.py)
+# UI art: Blender-rendered faceplates (tools/render_faceplate.py, using the photo textures from
+# tools/make_textures.py) and controls (tools/render_controls.py), plus OFL fonts.
 juce_add_binary_data(VoxSlapAssets SOURCES
-    Resources/panel_burgundy.jpg
-    Resources/panel_black.jpg
-    Resources/plate_aluminium.jpg
-    Resources/wood_cheeks.jpg
+    Resources/faceplate_top.jpg
+    Resources/faceplate_bottom.jpg
     Resources/glass_smudges.jpg
+    Resources/ink_wear.png
     Resources/knob_alu.png
     Resources/knob_black.png
     Resources/knob_chicken.png
     Resources/toggle.png
-    Resources/key.png)
+    Resources/power.png
+    Resources/fonts/BarlowCondensed-SemiBold.ttf
+    Resources/fonts/BarlowCondensed-Bold.ttf
+    Resources/fonts/Barlow-Medium.ttf
+    Resources/fonts/ShareTechMono-Regular.ttf)
 
 target_sources(VoxSlap PRIVATE
     Source/PluginProcessor.cpp

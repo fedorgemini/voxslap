@@ -54,6 +54,7 @@ public:
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 8.0; }
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -72,6 +73,7 @@ public:
 
     // Metering for the UI.
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, duckGain { 1.0f };
+    std::atomic<float> inputMeanSquare { 0.0f }, outputMeanSquare { 0.0f }; // ~50 ms averaged, for the VU needles
     std::atomic<double> hostBpm { 120.0 };
     ScopeFifo scope;
 
@@ -91,7 +93,7 @@ private:
     std::array<Channel, 2> channels;
 
     juce::AudioParameterChoice *modeParam, *divisionParam, *driveTypeParam;
-    juce::AudioParameterBool *syncParam, *reverseParam, *freezeParam;
+    juce::AudioParameterBool *syncParam, *reverseParam, *freezeParam, *bypassParam;
     std::atomic<float> *timeMs, *feedback, *mix, *hpf, *lpf, *drive, *width, *offset,
                        *duck, *duckThresh, *duckRelease, *modRate, *modDepth, *pitch, *output;
 
@@ -99,7 +101,8 @@ private:
     float smoothedDelayL = 0.0f, smoothedDelayR = 0.0f;
     float lfoPhase = 0.0f;
     float envelope = 0.0f, duckSmoothed = 1.0f;
-    float freezeAmount = 0.0f, reverseAmount = 0.0f;
+    float freezeAmount = 0.0f, reverseAmount = 0.0f, bypassAmount = 0.0f;
+    float inMs = 0.0f, outMs = 0.0f;
     juce::SmoothedValue<float> mixSmoothed, outSmoothed, feedbackSmoothed, makeupSmoothed, widthSmoothed;
 
     int scopeCounter = 0, scopeChunk = 441;

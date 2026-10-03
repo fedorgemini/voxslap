@@ -17,6 +17,7 @@ VoxSlapProcessor::VoxSlapProcessor()
     syncParam      = boolean (ParamID::sync);
     reverseParam   = boolean (ParamID::reverse);
     freezeParam    = boolean (ParamID::freeze);
+    bypassParam    = boolean (ParamID::bypass);
 
     timeMs      = raw (ParamID::timeMs);
     feedback    = raw (ParamID::feedback);
@@ -68,6 +69,8 @@ void VoxSlapProcessor::prepareToPlay (double sampleRate, int)
     duckSmoothed = 1.0f;
     freezeAmount = freezeParam->get() ? 1.0f : 0.0f;
     reverseAmount = reverseParam->get() ? 1.0f : 0.0f;
+    bypassAmount = bypassParam->get() ? 1.0f : 0.0f;
+    inMs = outMs = 0.0f;
 
     for (auto* s : { &mixSmoothed, &outSmoothed, &feedbackSmoothed, &makeupSmoothed, &widthSmoothed })
         s->reset (sr, 0.03);
@@ -184,6 +187,8 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     const float rampStep = 1.0f / (0.02f * (float) sr);
     const float freezeTarget = freezeParam->get() ? 1.0f : 0.0f;
     const float reverseTarget = reverseParam->get() ? 1.0f : 0.0f;
+    const float bypassTarget = bypassParam->get() ? 1.0f : 0.0f;
+    double inSq = 0.0, outSq = 0.0;
 
     float* left = buffer.getWritePointer (0);
     float* right = numOut > 1 ? buffer.getWritePointer (1) : nullptr;
@@ -196,6 +201,7 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         const float inR = right != nullptr ? right[i] : inL;
         const float mono = 0.5f * (inL + inR);
         inPeak = juce::jmax (inPeak, std::abs (inL), std::abs (inR));
+        inSq += 0.5 * ((double) inL * inL + (double) inR * inR);
 
         // ---- Ducking: how much the echoes hide under the voice ----
         const float level = std::abs (mono);
@@ -271,8 +277,11 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         const float wetGain = juce::jmin (1.0f, 2.0f * m);
         const float outGain = outSmoothed.getNextValue();
 
-        const float oL = (inL * dryGain + wetL * wetGain) * outGain;
-        const float oR = (inR * dryGain + wetR * wetGain) * outGain;
+        // Power switch: crossfade to the untouched input (the echo keeps running underneath).
+        bypassAmount = bypassAmount < bypassTarget ? juce::jmin (bypassTarget, bypassAmount + rampStep)
+                                                   : juce::jmax (bypassTarget, bypassAmount - rampStep);
+        const float oL = inL + (1.0f - bypassAmount) * ((inL * dryGain + wetL * wetGain) * outGain - inL);
+        const float oR = inR + (1.0f - bypassAmount) * ((inR * dryGain + wetR * wetGain) * outGain - inR);
 
         if (right != nullptr)
         {
@@ -285,6 +294,7 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         }
 
         outPeak = juce::jmax (outPeak, std::abs (oL), std::abs (oR));
+        outSq += 0.5 * ((double) oL * oL + (double) oR * oR);
 
         // ---- Scope history ----
         scopeDryMax = juce::jmax (scopeDryMax, std::abs (mono));
@@ -300,6 +310,15 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     inputPeak.store (juce::jmax (inputPeak.load(), inPeak));
     outputPeak.store (juce::jmax (outputPeak.load(), outPeak));
     duckGain.store (duckSmoothed);
+
+    if (numSamples > 0)
+    {
+        const float k = 1.0f - std::exp (-(float) numSamples / (0.05f * (float) sr));
+        inMs += ((float) (inSq / numSamples) - inMs) * k;
+        outMs += ((float) (outSq / numSamples) - outMs) * k;
+        inputMeanSquare.store (inMs);
+        outputMeanSquare.store (outMs);
+    }
 }
 
 int VoxSlapProcessor::getNumPrograms() { return 1; }
