@@ -46,6 +46,8 @@ juce_add_binary_data(VoxSlapAssets SOURCES
     Resources/knob_chicken.png
     Resources/toggle.png
     Resources/power.png
+    Resources/vu_under.png
+    Resources/vu_over.png
     Resources/fonts/Michroma-Regular.ttf
     Resources/fonts/Barlow-Medium.ttf
     Resources/fonts/ShareTechMono-Regular.ttf)

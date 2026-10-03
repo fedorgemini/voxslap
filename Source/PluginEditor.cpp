@@ -241,81 +241,27 @@ void VUMeter::paint (juce::Graphics& g)
 {
     using namespace juce;
     const auto face = getLocalBounds().toFloat().reduced ((float) wellInset);
-    const Colour ink (0xff1e1710), red (0xffc4261a), paper (0xfff1e2b8);
+    g.setImageResamplingQuality (Graphics::highResamplingQuality);
 
-    // Printed card lit from behind by two small incandescent lamps near the bottom corners.
-    g.setColour (paper.darker (0.22f));
-    g.fillRect (face);
-    for (float fx : { 0.22f, 0.78f })
-    {
-        ColourGradient lamp (juce::Colour (0xfffff4d6).withAlpha (0.95f), face.getX() + face.getWidth() * fx, face.getBottom() + 6.0f,
-                             paper.withAlpha (0.0f), face.getX() + face.getWidth() * fx, face.getY() - face.getHeight() * 0.25f, true);
-        lamp.addColour (0.45, paper.withAlpha (0.75f));
-        g.setGradientFill (lamp);
-        g.fillRect (face);
-    }
+    // Layer 1 (Blender): the printed card, back-lit, with the bezel's shadows on it
+    static const Image under = ImageCache::getFromMemory (BinaryData::vu_under_png, BinaryData::vu_under_pngSize);
+    static const Image over  = ImageCache::getFromMemory (BinaryData::vu_over_png, BinaryData::vu_over_pngSize);
+    g.drawImage (under, face);
 
     Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (face.toNearestInt());
 
+    const char* modeName = mode == Mode::input ? "INPUT" : mode == Mode::output ? "OUTPUT" : "ECHO DUCK";
+    g.setFont (font (9.5f).withExtraKerningFactor (0.2f));
+    g.setColour (juce::Colour (0xff1e1710).withAlpha (0.78f));
+    g.drawText (modeName, Rectangle<float> (face.getX(), face.getBottom() - 50.0f, face.getWidth(), 12.0f), Justification::centred);
+
+    // Layer 2 (live): the needle and its shadow. Same geometry as tools/make_vu_card.py.
     const float arcTop = face.getY() + 44.0f;
     const Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.42f);
     const float radius = pivot.y - arcTop;
     const float maxAngle = std::asin (jmin (0.95f, (face.getWidth() * 0.5f - 18.0f) / radius));
-    auto angleFor = [maxAngle] (float pos) { return -maxAngle + 2.0f * maxAngle * pos; };
-
-    // Main arc, with the red zone as a heavier band just inside it
-    Path arc, redBand;
-    arc.addCentredArc (pivot.x, pivot.y, radius, radius, 0.0f, angleFor (vuPosForDb (-20.0f)), angleFor (1.0f), true);
-    redBand.addCentredArc (pivot.x, pivot.y, radius - 4.0f, radius - 4.0f, 0.0f, angleFor (vuPosForDb (0.0f)), angleFor (1.0f), true);
-    g.setColour (ink);
-    g.strokePath (arc, PathStrokeType (1.4f));
-    g.setColour (red);
-    g.strokePath (redBand, PathStrokeType (5.0f));
-
-    g.setFont (font (11.5f));
-    for (float db : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
-    {
-        const float a = angleFor (vuPosForDb (db));
-        const bool major = db == -20.0f || db == -10.0f || db == -7.0f || db == -5.0f || db == -3.0f || db == 0.0f || db == 3.0f;
-        g.setColour (db > 0.0f ? red : ink);
-        g.drawLine (Line<float> (polar (pivot, radius, a), polar (pivot, radius + (major ? 10.0f : 6.0f), a)), major ? 1.5f : 1.1f);
-        if (db == -20.0f || db == -10.0f || db == -5.0f || db == -3.0f || db == 0.0f || db == 3.0f)
-        {
-            const auto text = (db > 0.0f ? "+" : "") + String ((int) db);
-            g.drawText (text, Rectangle<float> (30.0f, 13.0f).withCentre (polar (pivot, radius + 20.0f, a)), Justification::centred);
-        }
-    }
-
-    // Percentage scale below the arc
-    g.setFont (font (8.5f));
-    g.setColour (ink.withAlpha (0.7f));
-    for (int pct = 0; pct <= 100; pct += 10)
-    {
-        const float a = angleFor ((float) pct / 100.0f / 1.4125f);
-        const bool lab = pct % 50 == 0;
-        g.drawLine (Line<float> (polar (pivot, radius - 9.0f, a), polar (pivot, radius - (lab ? 15.0f : 12.0f), a)), 0.9f);
-        if (lab)
-            g.drawText (String (pct), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 23.0f, a)), Justification::centred);
-    }
-
-    const char* modeName = mode == Mode::input ? "INPUT" : mode == Mode::output ? "OUTPUT" : "ECHO DUCK";
-    g.setColour (ink);
-    g.setFont (font (25.0f).withExtraKerningFactor (0.12f));
-    g.drawText ("VU", Rectangle<float> (face.getX(), face.getBottom() - 74.0f, face.getWidth(), 26.0f), Justification::centred);
-    g.setFont (font (9.5f).withExtraKerningFactor (0.2f));
-    g.setColour (ink.withAlpha (0.8f));
-    g.drawText (modeName, Rectangle<float> (face.getX(), face.getBottom() - 50.0f, face.getWidth(), 12.0f), Justification::centred);
-
-    // Built-in peak lamp with its printed legend
-    const Point<float> led (face.getRight() - 16.0f, face.getY() + 16.0f);
-    g.setFont (font (7.5f).withExtraKerningFactor (0.15f));
-    g.setColour (ink.withAlpha (0.75f));
-    g.drawText ("PEAK", Rectangle<float> (led.x - 46.0f, led.y - 5.0f, 34.0f, 10.0f), Justification::centredRight);
-    drawJewel (g, led, 3.4f, Palette::lampRed, peakLamp);
-
-    // Needle: tapered, with a soft shadow on the card
-    const float a = angleFor (needle);
+    const float a = -maxAngle + 2.0f * maxAngle * needle;
     auto needlePath = [&] (Point<float> offset)
     {
         const auto tip = polar (pivot, radius + 12.0f, a) + offset;
@@ -334,49 +280,10 @@ void VUMeter::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff15100b));
     g.fillPath (needlePath ({}));
 
-    // Moulded pivot housing with the mechanical zero-adjust screw
-    const float hr = face.getWidth() * 0.2f;
-    const Point<float> hc (face.getCentreX(), face.getBottom() + 4.0f);
-    g.setGradientFill (ColourGradient (juce::Colour (0xff4a4540), hc.x - hr * 0.3f, hc.y - hr,
-                                       juce::Colour (0xff0b0a09), hc.x + hr * 0.4f, hc.y, false));
-    g.fillEllipse (hc.x - hr, hc.y - hr * 0.62f, hr * 2.0f, hr * 1.24f);
-    g.setColour (juce::Colours::white.withAlpha (0.18f));
-    g.drawEllipse (hc.x - hr + 1.0f, hc.y - hr * 0.62f + 1.0f, hr * 2.0f - 2.0f, hr * 1.24f - 2.0f, 0.8f);
-    const Point<float> sc (hc.x, hc.y - hr * 0.3f);
-    g.setGradientFill (ColourGradient (juce::Colour (0xffd6d3cc), sc.x - 4.0f, sc.y - 4.0f, juce::Colour (0xff5d5a54), sc.x + 4.0f, sc.y + 4.0f, false));
-    g.fillEllipse (sc.x - 4.5f, sc.y - 4.5f, 9.0f, 9.0f);
-    g.setColour (juce::Colour (0xff2a2826));
-    g.drawLine (sc.x - 3.2f, sc.y + 0.8f, sc.x + 3.2f, sc.y - 0.8f, 1.2f);
+    // Layer 3 (Blender): cover glass reflections and the pivot housing, in front of the needle
+    g.drawImage (over, face);
 
-    // Shadows cast by the bezel onto the card
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.5f), 0.0f, face.getY(),
-                                       juce::Colours::transparentBlack, 0.0f, face.getY() + 20.0f, false));
-    g.fillRect (face.withHeight (20.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.28f), face.getX(), 0.0f,
-                                       juce::Colours::transparentBlack, face.getX() + 12.0f, 0.0f, false));
-    g.fillRect (face.withWidth (12.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.18f), face.getRight(), 0.0f,
-                                       juce::Colours::transparentBlack, face.getRight() - 10.0f, 0.0f, false));
-    g.fillRect (face.withTrimmedLeft (face.getWidth() - 10.0f));
-
-    // Glass: a broad soft reflection plus a crisp curved highlight of the studio light
-    Path glare;
-    glare.startNewSubPath (face.getX(), face.getY());
-    glare.lineTo (face.getX() + face.getWidth() * 0.55f, face.getY());
-    glare.lineTo (face.getX() + face.getWidth() * 0.25f, face.getBottom());
-    glare.lineTo (face.getX(), face.getBottom());
-    glare.closeSubPath();
-    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.12f), face.getX(), face.getY(),
-                                       juce::Colours::transparentWhite, face.getX() + face.getWidth() * 0.4f, face.getCentreY(), false));
-    g.fillPath (glare);
-
-    Path sheen;
-    sheen.addCentredArc (face.getCentreX(), face.getY() + face.getHeight() * 1.6f, face.getWidth() * 1.25f, face.getHeight() * 1.5f,
-                         0.0f, -0.42f, 0.18f, true);
-    g.setColour (juce::Colours::white.withAlpha (0.06f));
-    g.strokePath (sheen, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
-    g.strokePath (sheen, PathStrokeType (1.5f, PathStrokeType::curved, PathStrokeType::rounded));
+    drawJewel (g, { face.getRight() - 16.0f, face.getY() + 16.0f }, 3.4f, Palette::lampRed, peakLamp);
 }
 
 //==============================================================================
