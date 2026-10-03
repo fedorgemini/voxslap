@@ -31,7 +31,7 @@ namespace Analog
     }
 
     //==========================================================================
-    // Embedded art shared by every editor instance: fonts, sprite sheets, ink wear.
+    // Embedded art shared by every editor instance: fonts and sprite sheets.
     // Kept alive by the LookAndFeel (SharedResourcePointer), so lookups elsewhere are cheap.
     struct Art
     {
@@ -49,28 +49,10 @@ namespace Analog
             chicken = load (knob_chicken_png, knob_chicken_pngSize);
             toggle  = load (toggle_png, toggle_pngSize);
             power   = load (power_png, power_pngSize);
-            inkMask = load (ink_wear_png, ink_wear_pngSize);
-        }
-
-        // Ink that has rubbed off in places: a tiled fill whose alpha comes from a scanned wear map.
-        const juce::Image& inkFor (juce::Colour c)
-        {
-            auto& img = inkCache[c.getARGB()];
-            if (img.isNull())
-            {
-                img = juce::Image (juce::Image::ARGB, inkMask.getWidth(), inkMask.getHeight(), true);
-                juce::Image::BitmapData in (inkMask, juce::Image::BitmapData::readOnly);
-                juce::Image::BitmapData out (img, juce::Image::BitmapData::writeOnly);
-                for (int y = 0; y < img.getHeight(); ++y)
-                    for (int x = 0; x < img.getWidth(); ++x)
-                        out.setPixelColour (x, y, c.withMultipliedAlpha (1.0f - 0.38f * (1.0f - in.getPixelColour (x, y).getFloatRed())));
-            }
-            return img;
         }
 
         juce::Typeface::Ptr silk, silkBold, ui, vfd;
-        juce::Image alu, black, chicken, toggle, power, inkMask;
-        std::map<juce::uint32, juce::Image> inkCache;
+        juce::Image alu, black, chicken, toggle, power;
     };
 
     inline Art& art() { return *juce::SharedResourcePointer<Art>(); }
@@ -83,11 +65,10 @@ namespace Analog
     inline juce::Font uiFont (float size) { return juce::Font (juce::FontOptions (art().ui).withHeight (size)); }
     inline juce::Font mono (float size)   { return juce::Font (juce::FontOptions (art().vfd).withHeight (size * 1.12f)); }
 
-    // Silkscreen ink: solid colour modulated by the wear map, anchored to the panel so the
-    // wear pattern does not shift between neighbouring components.
-    inline void setInk (juce::Graphics& g, juce::Colour c, juce::Point<int> originInPanel = {})
+    // Silkscreen ink.
+    inline void setInk (juce::Graphics& g, juce::Colour c, juce::Point<int> = {})
     {
-        g.setTiledImageFill (art().inkFor (c), -originInPanel.x, -originInPanel.y, 1.0f);
+        g.setColour (c); // clean, unworn print
     }
 
     inline juce::Point<int> panelOrigin (const juce::Component& c)

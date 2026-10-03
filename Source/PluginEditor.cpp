@@ -10,35 +10,6 @@ static const juce::Rectangle<int> inputWell { 56, 92, 214, 196 }, scopeWell { 28
 static const juce::Rectangle<int> namePlate { 44, 16, 912, 60 };
 static constexpr int wellInset = 15; // face/screen starts at the bottom of the sloped well walls
 
-//==============================================================================
-// Greyscale smudge scan turned into an alpha mask, shared by every piece of glass.
-struct GlassSmudges
-{
-    GlassSmudges()
-    {
-        auto src = juce::ImageCache::getFromMemory (BinaryData::glass_smudges_jpg, BinaryData::glass_smudges_jpgSize);
-        mask = juce::Image (juce::Image::SingleChannel, src.getWidth(), src.getHeight(), false);
-        juce::Image::BitmapData in (src, juce::Image::BitmapData::readOnly);
-        juce::Image::BitmapData out (mask, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < src.getHeight(); ++y)
-            for (int x = 0; x < src.getWidth(); ++x)
-                *out.getPixelPointer (x, y) = in.getPixelColour (x, y).getGreen();
-    }
-    juce::Image mask;
-};
-
-static void drawGlassSmudges (juce::Graphics& g, juce::Rectangle<float> glass, float alpha, int seed)
-{
-    juce::SharedResourcePointer<GlassSmudges> smudges;
-    const auto& m = smudges->mask;
-    const int sx = (seed * 173) % (m.getWidth() / 2), sy = (seed * 97) % (m.getHeight() / 2);
-    juce::Graphics::ScopedSaveState save (g);
-    g.reduceClipRegion (glass.toNearestInt());
-    g.setColour (juce::Colours::white.withAlpha (alpha));
-    g.drawImage (m, (int) glass.getX(), (int) glass.getY(), (int) glass.getWidth(), (int) glass.getHeight(),
-                 sx, sy, m.getWidth() / 2, m.getHeight() / 2, true);
-}
-
 // Short numbers for printed scales: 2 significant digits, "k" for thousands.
 static juce::String scaleNumber (float v)
 {
@@ -278,7 +249,6 @@ void VUMeter::paint (juce::Graphics& g)
                                        juce::Colours::transparentWhite, face.getX() + face.getWidth() * 0.4f, face.getCentreY(), false));
     g.fillPath (glare);
 
-    drawGlassSmudges (g, face, 0.09f, (int) mode + 1);
     drawJewel (g, { face.getRight() - 13.0f, face.getY() + 15.0f }, 3.5f, Palette::lampRed, peakLamp);
 }
 
@@ -358,7 +328,6 @@ void EchoScope::paint (juce::Graphics& g)
         g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.10f), screen.getX(), screen.getY(),
                                            juce::Colours::transparentWhite, screen.getX() + screen.getWidth() * 0.35f, screen.getCentreY(), false));
         g.fillRect (screen);
-        drawGlassSmudges (g, screen, 0.07f, 3);
     }
 
     g.setColour (juce::Colours::black);

@@ -98,7 +98,7 @@ cmake --build build --config Release
 
 ## Текстуры
 Текстуры интерфейса запечены скриптом `tools/make_textures.py` из бесплатных (CC0) фотосканов
-[ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003, Fingerprints002.
+[ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003.
 Лицевые панели (`tools/render_faceplate.py`), ручки и тумблеры (`tools/render_controls.py`, 120 кадров
 поворота на ручку) отрендерены в Blender; спрайты собирает `tools/pack_controls.py`.
 Шрифты Barlow / Barlow Condensed и Share Tech Mono — SIL Open Font License (`Resources/fonts/OFL*.txt`).

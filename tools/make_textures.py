@@ -1,7 +1,7 @@
 """
 Bakes the UI textures in Resources/ from CC0 photo-scanned materials by ambientCG (https://ambientcg.com):
 
-    PaintedMetal004, Metal011, Wood066, SurfaceImperfections003, Fingerprints002  (1K-JPG versions)
+    PaintedMetal004, Metal011, Wood066, SurfaceImperfections003  (1K-JPG versions)
 
 Usage:
     python3 tools/make_textures.py <folder with the unzipped ambientCG downloads>
@@ -59,7 +59,7 @@ rough_src = load("PaintedMetal004", "Roughness")
 grime_src = load("SurfaceImperfections003", "Opacity")
 
 
-def painted_panel(w, h, base_rgb, chip_strength, offset, seed):
+def painted_panel(w, h, base_rgb, chip_strength, offset, seed, grime_amount=0.16):
     rng = np.random.default_rng(seed)
     base = np.array(base_rgb, np.float32) / 255.0
 
@@ -72,7 +72,7 @@ def painted_panel(w, h, base_rgb, chip_strength, offset, seed):
     wear = 0.05 + 0.95 * edge_weight(w, h, 38.0 * S)
     chip_alpha = np.clip(chips * wear * chip_strength, 0, 1)
 
-    shade = 1.0 + 0.03 * rough - 0.16 * grime + 0.015 * rng.standard_normal((h, w)).astype(np.float32)
+    shade = 1.0 + 0.03 * rough - grime_amount * grime + 0.006 * rng.standard_normal((h, w)).astype(np.float32)
     paint = base[None, None, :] * shade[..., None]
 
     steel = np.array([0.56, 0.55, 0.53], np.float32)[None, None, :] * (0.85 + 0.08 * rough[..., None])
@@ -80,8 +80,9 @@ def painted_panel(w, h, base_rgb, chip_strength, offset, seed):
     return out
 
 
-save(painted_panel(UNIT_W, TOP_H * S, (79, 31, 29), 0.85, (0, 0), 1), "panel_burgundy.jpg")
-save(painted_panel(UNIT_W, BOTTOM_H * S, (28, 27, 26), 0.32, (311, 517), 2), "panel_black.jpg")
+# Clean, well-kept finish: no chips or grime, only the paint's own subtle texture.
+save(painted_panel(UNIT_W, TOP_H * S, (79, 31, 29), 0.0, (0, 0), 1, grime_amount=0.0), "panel_burgundy.jpg")
+save(painted_panel(UNIT_W, BOTTOM_H * S, (28, 27, 26), 0.0, (311, 517), 2, grime_amount=0.0), "panel_black.jpg")
 
 # Brushed aluminium name plate (grain runs horizontally)
 alu = load("Metal011", "Color")
@@ -96,16 +97,3 @@ cheek_w, cheek_h = CHEEK_W * S, (TOP_H + BOTTOM_H) * S
 left = tile(wood[:, 180:180 + cheek_w], cheek_w, cheek_h)
 right = tile(wood[:, 640:640 + cheek_w], cheek_w, cheek_h, (400, 0))
 save(np.concatenate([left, right], axis=1) * 0.92, "wood_cheeks.jpg")
-
-# Fingerprints/smudges for glass (used as a faint white alpha mask)
-prints = load("Fingerprints002", "Opacity")
-img = Image.fromarray((prints * 255).astype(np.uint8)).resize((512, 512), Image.LANCZOS)
-img.save(os.path.join(OUT, "glass_smudges.jpg"), quality=85)
-print("glass_smudges.jpg", img.size)
-
-# Wear mask for silkscreen ink: mostly opaque, with small rubbed-off spots and hairline scratches.
-chips = Image.fromarray((chips_src * 255).astype(np.uint8)).resize((512, 512), Image.LANCZOS)
-c = np.asarray(chips, dtype=np.float32) / 255.0
-ink = np.clip(1.0 - 0.85 * c, 0.0, 1.0) * (0.9 + 0.1 * load("PaintedMetal004", "Roughness")[:512, :512])
-Image.fromarray((np.clip(ink, 0, 1) * 255).astype(np.uint8)).save(os.path.join(OUT, "ink_wear.png"), optimize=True)
-print("ink_wear.png", (512, 512))

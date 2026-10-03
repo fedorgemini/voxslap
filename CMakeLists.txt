@@ -40,8 +40,6 @@ juce_add_plugin(VoxSlap
 juce_add_binary_data(VoxSlapAssets SOURCES
     Resources/faceplate_top.jpg
     Resources/faceplate_bottom.jpg
-    Resources/glass_smudges.jpg
-    Resources/ink_wear.png
     Resources/knob_alu.png
     Resources/knob_black.png
     Resources/knob_chicken.png
