@@ -241,98 +241,142 @@ void VUMeter::paint (juce::Graphics& g)
 {
     using namespace juce;
     const auto face = getLocalBounds().toFloat().reduced ((float) wellInset);
+    const Colour ink (0xff1e1710), red (0xffc4261a), paper (0xfff1e2b8);
 
-    // Warm incandescent backlight from below
-    ColourGradient light (juce::Colour (0xfffff3cf), face.getCentreX(), face.getBottom() + face.getHeight() * 0.1f,
-                          juce::Colour (0xffb98c48), face.getX() - face.getWidth() * 0.1f, face.getY(), true);
-    light.addColour (0.55, Palette::vuFace);
-    g.setGradientFill (light);
+    // Printed card lit from behind by two small incandescent lamps near the bottom corners.
+    g.setColour (paper.darker (0.22f));
     g.fillRect (face);
+    for (float fx : { 0.22f, 0.78f })
+    {
+        ColourGradient lamp (juce::Colour (0xfffff4d6).withAlpha (0.95f), face.getX() + face.getWidth() * fx, face.getBottom() + 6.0f,
+                             paper.withAlpha (0.0f), face.getX() + face.getWidth() * fx, face.getY() - face.getHeight() * 0.25f, true);
+        lamp.addColour (0.45, paper.withAlpha (0.75f));
+        g.setGradientFill (lamp);
+        g.fillRect (face);
+    }
 
     Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (face.toNearestInt());
 
-    const float arcTop = face.getY() + 42.0f;
+    const float arcTop = face.getY() + 44.0f;
     const Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.42f);
     const float radius = pivot.y - arcTop;
     const float maxAngle = std::asin (jmin (0.95f, (face.getWidth() * 0.5f - 18.0f) / radius));
     auto angleFor = [maxAngle] (float pos) { return -maxAngle + 2.0f * maxAngle * pos; };
-    const Colour ink (0xff221a12), red (0xffc92a1c);
 
-    Path blackArc, redArc;
-    blackArc.addCentredArc (pivot.x, pivot.y, radius, radius, 0.0f, angleFor (vuPosForDb (-20.0f)), angleFor (vuPosForDb (0.0f)), true);
-    redArc.addCentredArc (pivot.x, pivot.y, radius + 1.5f, radius + 1.5f, 0.0f, angleFor (vuPosForDb (0.0f)), angleFor (1.0f), true);
+    // Main arc, with the red zone as a heavier band just inside it
+    Path arc, redBand;
+    arc.addCentredArc (pivot.x, pivot.y, radius, radius, 0.0f, angleFor (vuPosForDb (-20.0f)), angleFor (1.0f), true);
+    redBand.addCentredArc (pivot.x, pivot.y, radius - 4.0f, radius - 4.0f, 0.0f, angleFor (vuPosForDb (0.0f)), angleFor (1.0f), true);
     g.setColour (ink);
-    g.strokePath (blackArc, PathStrokeType (3.5f));
+    g.strokePath (arc, PathStrokeType (1.4f));
     g.setColour (red);
-    g.strokePath (redArc, PathStrokeType (7.0f));
+    g.strokePath (redBand, PathStrokeType (5.0f));
 
-    g.setFont (font (12.0f));
+    g.setFont (font (11.5f));
     for (float db : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
     {
         const float a = angleFor (vuPosForDb (db));
+        const bool major = db == -20.0f || db == -10.0f || db == -7.0f || db == -5.0f || db == -3.0f || db == 0.0f || db == 3.0f;
         g.setColour (db > 0.0f ? red : ink);
-        g.drawLine (Line<float> (polar (pivot, radius + 1.0f, a), polar (pivot, radius + 9.0f, a)), 1.5f);
+        g.drawLine (Line<float> (polar (pivot, radius, a), polar (pivot, radius + (major ? 10.0f : 6.0f), a)), major ? 1.5f : 1.1f);
         if (db == -20.0f || db == -10.0f || db == -5.0f || db == -3.0f || db == 0.0f || db == 3.0f)
         {
             const auto text = (db > 0.0f ? "+" : "") + String ((int) db);
-            g.drawText (text, Rectangle<float> (28.0f, 13.0f).withCentre (polar (pivot, radius + 19.0f, a)), Justification::centred);
+            g.drawText (text, Rectangle<float> (30.0f, 13.0f).withCentre (polar (pivot, radius + 20.0f, a)), Justification::centred);
         }
     }
 
-    g.setFont (font (9.0f));
-    g.setColour (ink.withAlpha (0.75f));
-    for (int pct : { 0, 20, 40, 60, 80, 100 })
+    // Percentage scale below the arc
+    g.setFont (font (8.5f));
+    g.setColour (ink.withAlpha (0.7f));
+    for (int pct = 0; pct <= 100; pct += 10)
     {
         const float a = angleFor ((float) pct / 100.0f / 1.4125f);
-        g.drawLine (Line<float> (polar (pivot, radius - 2.0f, a), polar (pivot, radius - 7.0f, a)), 1.0f);
-        if (pct % 50 == 0)
-            g.drawText (String (pct), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 14.0f, a)), Justification::centred);
+        const bool lab = pct % 50 == 0;
+        g.drawLine (Line<float> (polar (pivot, radius - 9.0f, a), polar (pivot, radius - (lab ? 15.0f : 12.0f), a)), 0.9f);
+        if (lab)
+            g.drawText (String (pct), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 23.0f, a)), Justification::centred);
     }
 
     const char* modeName = mode == Mode::input ? "INPUT" : mode == Mode::output ? "OUTPUT" : "ECHO DUCK";
     g.setColour (ink);
-    g.setFont (font (24.0f, true));
-    g.drawText ("VU", Rectangle<float> (face.getX(), face.getBottom() - 70.0f, face.getWidth(), 26.0f), Justification::centred);
-    g.setFont (font (11.0f));
+    g.setFont (font (25.0f).withExtraKerningFactor (0.12f));
+    g.drawText ("VU", Rectangle<float> (face.getX(), face.getBottom() - 74.0f, face.getWidth(), 26.0f), Justification::centred);
+    g.setFont (font (9.5f).withExtraKerningFactor (0.2f));
+    g.setColour (ink.withAlpha (0.8f));
+    g.drawText (modeName, Rectangle<float> (face.getX(), face.getBottom() - 50.0f, face.getWidth(), 12.0f), Justification::centred);
+
+    // Built-in peak lamp with its printed legend
+    const Point<float> led (face.getRight() - 16.0f, face.getY() + 16.0f);
+    g.setFont (font (7.5f).withExtraKerningFactor (0.15f));
     g.setColour (ink.withAlpha (0.75f));
-    g.drawText (modeName, Rectangle<float> (face.getX(), face.getBottom() - 46.0f, face.getWidth(), 13.0f), Justification::centred);
+    g.drawText ("PEAK", Rectangle<float> (led.x - 46.0f, led.y - 5.0f, 34.0f, 10.0f), Justification::centredRight);
+    drawJewel (g, led, 3.4f, Palette::lampRed, peakLamp);
 
+    // Needle: tapered, with a soft shadow on the card
     const float a = angleFor (needle);
-    g.setColour (juce::Colours::black.withAlpha (0.18f));
-    g.drawLine (Line<float> (pivot.translated (3.0f, 5.0f), polar (pivot, radius + 12.0f, a).translated (3.0f, 5.0f)), 2.2f);
-    g.setColour (juce::Colour (0xff120d0a));
-    g.drawLine (Line<float> (pivot, polar (pivot, radius + 12.0f, a)), 1.4f);
+    auto needlePath = [&] (Point<float> offset)
+    {
+        const auto tip = polar (pivot, radius + 12.0f, a) + offset;
+        const auto base = pivot + offset;
+        const auto n = Point<float> (std::cos (a), std::sin (a));
+        Path p;
+        p.startNewSubPath (base + n * 1.3f);
+        p.lineTo (tip + n * 0.45f);
+        p.lineTo (tip - n * 0.45f);
+        p.lineTo (base - n * 1.3f);
+        p.closeSubPath();
+        return p;
+    };
+    g.setColour (juce::Colours::black.withAlpha (0.16f));
+    g.fillPath (needlePath ({ 3.0f, 5.0f }));
+    g.setColour (juce::Colour (0xff15100b));
+    g.fillPath (needlePath ({}));
 
-    auto dome = Rectangle<float> (face.getWidth() * 0.42f, 22.0f).withCentre ({ face.getCentreX(), face.getBottom() });
-    g.setGradientFill (ColourGradient (juce::Colour (0xff3a3632), dome.getCentreX(), dome.getY(),
-                                       juce::Colour (0xff0c0b0a), dome.getCentreX(), dome.getBottom(), false));
-    g.fillEllipse (dome);
-    g.setColour (juce::Colours::white.withAlpha (0.15f));
-    g.drawEllipse (dome.reduced (1.0f), 0.8f);
+    // Moulded pivot housing with the mechanical zero-adjust screw
+    const float hr = face.getWidth() * 0.2f;
+    const Point<float> hc (face.getCentreX(), face.getBottom() + 4.0f);
+    g.setGradientFill (ColourGradient (juce::Colour (0xff4a4540), hc.x - hr * 0.3f, hc.y - hr,
+                                       juce::Colour (0xff0b0a09), hc.x + hr * 0.4f, hc.y, false));
+    g.fillEllipse (hc.x - hr, hc.y - hr * 0.62f, hr * 2.0f, hr * 1.24f);
+    g.setColour (juce::Colours::white.withAlpha (0.18f));
+    g.drawEllipse (hc.x - hr + 1.0f, hc.y - hr * 0.62f + 1.0f, hr * 2.0f - 2.0f, hr * 1.24f - 2.0f, 0.8f);
+    const Point<float> sc (hc.x, hc.y - hr * 0.3f);
+    g.setGradientFill (ColourGradient (juce::Colour (0xffd6d3cc), sc.x - 4.0f, sc.y - 4.0f, juce::Colour (0xff5d5a54), sc.x + 4.0f, sc.y + 4.0f, false));
+    g.fillEllipse (sc.x - 4.5f, sc.y - 4.5f, 9.0f, 9.0f);
+    g.setColour (juce::Colour (0xff2a2826));
+    g.drawLine (sc.x - 3.2f, sc.y + 0.8f, sc.x + 3.2f, sc.y - 0.8f, 1.2f);
 
-    // Shadows cast by the bezel, then the glass
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.55f), 0.0f, face.getY(),
-                                       juce::Colours::transparentBlack, 0.0f, face.getY() + 22.0f, false));
-    g.fillRect (face.withHeight (22.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.3f), face.getX(), 0.0f,
-                                       juce::Colours::transparentBlack, face.getX() + 14.0f, 0.0f, false));
-    g.fillRect (face.withWidth (14.0f));
-    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.2f), face.getRight(), 0.0f,
-                                       juce::Colours::transparentBlack, face.getRight() - 12.0f, 0.0f, false));
-    g.fillRect (face.withTrimmedLeft (face.getWidth() - 12.0f));
+    // Shadows cast by the bezel onto the card
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.5f), 0.0f, face.getY(),
+                                       juce::Colours::transparentBlack, 0.0f, face.getY() + 20.0f, false));
+    g.fillRect (face.withHeight (20.0f));
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.28f), face.getX(), 0.0f,
+                                       juce::Colours::transparentBlack, face.getX() + 12.0f, 0.0f, false));
+    g.fillRect (face.withWidth (12.0f));
+    g.setGradientFill (ColourGradient (juce::Colours::black.withAlpha (0.18f), face.getRight(), 0.0f,
+                                       juce::Colours::transparentBlack, face.getRight() - 10.0f, 0.0f, false));
+    g.fillRect (face.withTrimmedLeft (face.getWidth() - 10.0f));
 
+    // Glass: a broad soft reflection plus a crisp curved highlight of the studio light
     Path glare;
     glare.startNewSubPath (face.getX(), face.getY());
     glare.lineTo (face.getX() + face.getWidth() * 0.55f, face.getY());
     glare.lineTo (face.getX() + face.getWidth() * 0.25f, face.getBottom());
     glare.lineTo (face.getX(), face.getBottom());
     glare.closeSubPath();
-    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.14f), face.getX(), face.getY(),
+    g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.12f), face.getX(), face.getY(),
                                        juce::Colours::transparentWhite, face.getX() + face.getWidth() * 0.4f, face.getCentreY(), false));
     g.fillPath (glare);
 
-    drawJewel (g, { face.getRight() - 13.0f, face.getY() + 15.0f }, 3.5f, Palette::lampRed, peakLamp);
+    Path sheen;
+    sheen.addCentredArc (face.getCentreX(), face.getY() + face.getHeight() * 1.6f, face.getWidth() * 1.25f, face.getHeight() * 1.5f,
+                         0.0f, -0.42f, 0.18f, true);
+    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    g.strokePath (sheen, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
+    g.setColour (juce::Colours::white.withAlpha (0.10f));
+    g.strokePath (sheen, PathStrokeType (1.5f, PathStrokeType::curved, PathStrokeType::rounded));
 }
 
 //==============================================================================

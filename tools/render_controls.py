@@ -76,6 +76,7 @@ def reset_scene(res_x, res_y, ortho_scale, samples=128):
     bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, 0))
     floor = bpy.context.active_object
     floor.is_shadow_catcher = True
+    floor.visible_glossy = False
     return scene
 
 
@@ -279,42 +280,41 @@ def build_chicken_knob():
 
 
 def build_toggle(tilt_deg, horizontal=False):
-    chrome = material("Chrome", (0.95, 0.95, 0.95), metallic=1.0, rough=0.07)
-    satin = material("Satin", (0.85, 0.85, 0.84), metallic=1.0, rough=0.28)
+    """Bat-handle toggle in satin nickel (same finish family as the aluminium knobs):
+    knurled escutcheon washer, hex nut, threaded bushing and a lever that thickens towards its rounded end."""
+    nickel = material("Nickel", (0.80, 0.80, 0.78), metallic=1.0, rough=0.2)
+    satin = material("SatinNickel", (0.78, 0.78, 0.76), metallic=1.0, rough=0.32)
     hole = material("Hole", (0.01, 0.01, 0.01), rough=0.6)
 
-    ring = cylinder("Ring", 0.90, 0.0, 0.10)
-    assign(ring, satin); smooth(ring, 0.04, 3)
-    nut = cylinder("Nut", 0.62, 0.0, 0.30, n=6)
+    washer = prism("Washer", knurl_points(0.98, 0.95, 72), 0.0, 0.07)
+    assign(washer, satin); smooth(washer, 0.01, 2)
+    nut = cylinder("Nut", 0.6, 0.0, 0.26, n=6)
     nut.rotation_euler.z = math.radians(30)
-    assign(nut, satin); smooth(nut, 0.03, 2, limit_angle=60)
-    bushing = cylinder("Bushing", 0.30, 0.0, 0.42)
-    assign(bushing, chrome); smooth(bushing, 0.03, 2)
-    inner = cylinder("HoleC", 0.20, 0.0, 0.425)
+    assign(nut, satin); smooth(nut, 0.035, 3, limit_angle=60)
+    bushing = cylinder("Bushing", 0.32, 0.0, 0.40)
+    assign(bushing, nickel); smooth(bushing, 0.04, 3)
+    inner = cylinder("HoleC", 0.17, 0.0, 0.405)
     assign(inner, hole)
 
-    # Bat-handle lever: tapered shaft + ball tip, tilted towards +Y (on) or -Y (off)
-    lever_len = 2.0
-    shaft = prism("Shaft", circle_points(1.0, 48), 0.0, lever_len)
-    shaft.scale = (0.16, 0.16, 1.0)
-    m = shaft.modifiers.new("Taper", "SIMPLE_DEFORM")
-    m.deform_method = "TAPER"
-    m.factor = 0.6
-    m.deform_axis = "Z"
-    assign(shaft, chrome); smooth(shaft)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.30, segments=48, ring_count=24, location=(0, 0, lever_len))
-    ball = bpy.context.active_object
-    assign(ball, chrome); smooth(ball)
+    # Bat handle: a cone widening from the pivot, closed by a rounded end
+    lever_len = 1.75
+    bpy.ops.mesh.primitive_cone_add(vertices=64, radius1=0.13, radius2=0.21, depth=lever_len, location=(0, 0, lever_len / 2))
+    shaft = bpy.context.active_object
+    assign(shaft, nickel); smooth(shaft)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.215, segments=48, ring_count=24, location=(0, 0, lever_len))
+    tip = bpy.context.active_object
+    tip.scale.z = 0.8
+    assign(tip, nickel); smooth(tip)
     lever = bpy.data.objects.new("Lever", None)
     bpy.context.scene.collection.objects.link(lever)
-    lever.location = (0, 0, 0.35)
+    lever.location = (0, 0, 0.32)
     shaft.parent = lever
-    ball.parent = lever
+    tip.parent = lever
     if horizontal:
         lever.rotation_euler.y = math.radians(tilt_deg)   # positive = lever to the right
     else:
         lever.rotation_euler.x = math.radians(-tilt_deg)  # positive = lever up
-    return group([ring, nut, bushing, inner, lever])
+    return group([washer, nut, bushing, inner, lever])
 
 
 # ---------------------------------------------------------------- render jobs
