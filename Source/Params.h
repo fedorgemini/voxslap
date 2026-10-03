@@ -71,6 +71,10 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     auto hz = Attr().withStringFromValueFunction ([] (float v, int)
     {
         return v >= 1000.0f ? String (v / 1000.0f, 1) + " kHz" : String (roundToInt (v)) + " Hz";
+    }).withValueFromStringFunction ([] (const String& text)
+    {
+        const float v = text.getFloatValue();
+        return text.containsIgnoreCase ("k") ? v * 1000.0f : v;
     });
     auto ms = Attr().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " ms"; });
     auto db = Attr().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; });

@@ -26,6 +26,7 @@ juce_add_plugin(VoxSlap
     FORMATS ${VOXSLAP_FORMATS}
     PRODUCT_NAME "VoxSlap"
     BUNDLE_ID "com.homebrewaudio.voxslap"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE

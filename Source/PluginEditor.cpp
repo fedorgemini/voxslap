@@ -27,6 +27,29 @@ static juce::String scaleNumber (float v)
 }
 
 //==============================================================================
+double DetentSlider::snapValue (double attempted, DragMode mode)
+{
+    if (hasDetent && mode != notDragging
+        && std::abs (valueToProportionOfLength (attempted) - valueToProportionOfLength (detent)) < 0.025)
+        return detent;
+    return attempted;
+}
+
+void DetentSlider::mouseDown (const juce::MouseEvent& e)
+{
+    rightClicked = e.mods.isPopupMenu();
+    if (rightClicked)
+    {
+        if (onRightClick) onRightClick();
+        return;
+    }
+    Slider::mouseDown (e);
+}
+
+void DetentSlider::mouseDrag (const juce::MouseEvent& e) { if (! rightClicked) Slider::mouseDrag (e); }
+void DetentSlider::mouseUp (const juce::MouseEvent& e)   { if (! rightClicked) Slider::mouseUp (e); rightClicked = false; }
+
+//==============================================================================
 KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char* paramID,
                           const juce::String& t, KnobStyle style, const juce::String& scaleLabels)
     : title (t)
@@ -37,11 +60,14 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     slider.setMouseDragSensitivity (style == KnobStyle::chicken ? 140 : 240);
     // Holding Shift switches to slow, velocity-based dragging for fine adjustments.
     slider.setVelocityModeParameters (0.25, 1, 0.0, true, ModifierKeys::shiftModifier);
+    slider.setScrollWheelEnabled (true);
     slider.addMouseListener (this, false);
     slider.setPaintingIsUnclipped (true);
     setPaintingIsUnclipped (true);
 
     auto* param = state.getParameter (paramID);
+    choiceParam = dynamic_cast<AudioParameterChoice*> (param);
+    stepped = choiceParam != nullptr;
     String labels = scaleLabels;
 
     if (labels == "auto")
@@ -52,9 +78,9 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
         for (int i = 0; i < 5; ++i)
             labels << (i > 0 ? "|" : "") << (sparse && (i % 2 == 1) ? String() : scaleNumber (range.convertFrom0to1 ((float) i / 4.0f)));
     }
-    else if (auto* choice = dynamic_cast<AudioParameterChoice*> (param); choice != nullptr && labels.isEmpty())
+    else if (choiceParam != nullptr && labels.isEmpty())
     {
-        labels = choice->choices.joinIntoString ("|").toUpperCase();
+        labels = choiceParam->choices.joinIntoString ("|").toUpperCase();
     }
 
     auto& props = slider.getProperties();
@@ -77,14 +103,88 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     attachment = std::make_unique<AudioProcessorValueTreeState::SliderAttachment> (state, paramID, slider);
     defaultValue = param->convertFrom0to1 (param->getDefaultValue());
     slider.setDoubleClickReturnValue (true, defaultValue);
-    slider.onValueChange = [this] { repaint(); };
+    slider.onValueChange = [this] { announce (true); };
+    slider.onRightClick = [this] { showMenu(); };
+    props.set ("displayPos", slider.valueToProportionOfLength (slider.getValue()));
     addAndMakeVisible (slider);
+}
+
+void KnobControl::announce (bool changed)
+{
+    if (onReadout)
+        onReadout (title, slider.getTextFromValue (slider.getValue()), changed);
 }
 
 void KnobControl::mouseDown (const juce::MouseEvent& e)
 {
-    if (e.mods.isAltDown())
+    if (e.mods.isAltDown() && ! e.mods.isPopupMenu())
         slider.setValue (defaultValue, juce::sendNotificationSync);
+    announce (false);
+}
+
+// The drawn position follows the value: stepped selectors swing over in ~0.1 s,
+// continuous knobs only glide on big jumps (preset changes, automation) and track the mouse 1:1.
+void KnobControl::tick (float dt)
+{
+    auto& props = slider.getProperties();
+    const float target = (float) slider.valueToProportionOfLength (slider.getValue());
+    const float current = (float) props.getWithDefault ("displayPos", target);
+    if (current == target)
+        return;
+
+    float next = target;
+    if (stepped || std::abs (target - current) > 0.08f)
+    {
+        const float speed = dt / (stepped ? 0.09f : 0.16f);
+        next = current + juce::jlimit (-speed, speed, target - current);
+        if (std::abs (target - next) < 0.002f) next = target;
+    }
+    props.set ("displayPos", next);
+    slider.repaint();
+}
+
+void KnobControl::showMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (title);
+    m.addItem (1, "Reset to default");
+    m.addItem (2, "Enter value...", ! stepped);
+    if (choiceParam != nullptr)
+    {
+        m.addSeparator();
+        for (int i = 0; i < choiceParam->choices.size(); ++i)
+            m.addItem (100 + i, choiceParam->choices[i], true, choiceParam->getIndex() == i);
+    }
+    m.addSeparator();
+    m.addItem (3, "Tip: Shift-drag = fine, Alt-click = reset", false);
+
+    juce::Component::SafePointer<KnobControl> safeThis (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slider), [safeThis] (int result)
+    {
+        if (safeThis == nullptr || result == 0) return;
+        auto& s = safeThis->slider;
+        if (result == 1)        s.setValue (safeThis->defaultValue, juce::sendNotificationSync);
+        else if (result == 2)   safeThis->enterValueDialog();
+        else if (result >= 100) s.setValue (result - 100, juce::sendNotificationSync);
+    });
+}
+
+void KnobControl::enterValueDialog()
+{
+    auto* window = new juce::AlertWindow (title, "Enter a value:", juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("value", slider.getTextFromValue (slider.getValue()));
+    window->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<KnobControl> safeThis (this);
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([safeThis, window] (int result)
+    {
+        if (result == 1 && safeThis != nullptr)
+        {
+            auto& s = safeThis->slider;
+            s.setValue (s.getValueFromText (window->getTextEditorContents ("value")), juce::sendNotificationSync);
+        }
+    }), true);
 }
 
 void KnobControl::resized()
@@ -101,21 +201,6 @@ void KnobControl::paint (juce::Graphics& g)
     g.setFont (font (14.5f));
     setInk (g, Palette::silkscreen, panelOrigin (*this));
     g.drawText (title, titleArea, juce::Justification::centred);
-}
-
-void KnobControl::paintOverChildren (juce::Graphics& g)
-{
-    if (! slider.isMouseOverOrDragging())
-        return;
-
-    const auto text = slider.getTextFromValue (slider.getValue());
-    g.setFont (mono (12.0f));
-    const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) + 14.0f;
-    auto plate = juce::Rectangle<float> (tw, 17.0f).withCentre ({ (float) getWidth() * 0.5f, (float) getHeight() - 8.0f });
-    g.setColour (juce::Colours::black.withAlpha (0.85f));
-    g.fillRoundedRectangle (plate, 3.0f);
-    g.setColour (Palette::amber);
-    g.drawText (text, plate, juce::Justification::centred);
 }
 
 //==============================================================================
@@ -253,11 +338,106 @@ void VUMeter::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-void EchoScope::pushHistory (float dry, float wet)
+void EchoScope::pushHistory (float dry, float wet, float beat)
 {
     dryHistory[(size_t) writeIndex] = dry;
     wetHistory[(size_t) writeIndex] = wet;
+    beatHistory[(size_t) writeIndex] = beat;
     writeIndex = (writeIndex + 1) % historySize;
+    ++chunkClock;
+
+    // Phrase/syllable onsets: each one triggers the echo-map flashes at the repeat times.
+    slowDry += (dry - slowDry) * 0.05f;
+    if (dry > 0.02f && dry > slowDry * 2.2f && chunkClock - lastOnset > 12)
+    {
+        onsets.push_back (chunkClock);
+        lastOnset = chunkClock;
+    }
+    onsets.erase (std::remove_if (onsets.begin(), onsets.end(), [this] (juce::int64 o) { return chunkClock - o > 450; }), onsets.end());
+}
+
+void EchoScope::showReadout (const juce::String& title, const juce::String& value, bool changed)
+{
+    readoutTitle = title;
+    readoutValue = value;
+    readoutAlpha = changed ? 1.6f : juce::jmax (readoutAlpha, 1.0f);
+}
+
+juce::Path EchoScope::buildShape (const std::array<float, historySize>& data, juce::Rectangle<float> area) const
+{
+    using namespace juce;
+    const float midY = area.getCentreY(), halfH = area.getHeight() * 0.5f;
+    auto xFor = [&] (int i) { return area.getX() + area.getWidth() * (float) i / (float) (historySize - 1); };
+    auto toHeight = [halfH] (float level)
+    {
+        const float db = Decibels::gainToDecibels (level, -60.0f);
+        return jlimit (0.0f, 1.0f, (db + 48.0f) / 48.0f) * halfH;
+    };
+    Path p;
+    p.startNewSubPath (area.getX(), midY);
+    for (int i = 0; i < historySize; ++i)
+        p.lineTo (xFor (i), midY - toHeight (data[(size_t) ((writeIndex + i) % historySize)]));
+    for (int i = historySize - 1; i >= 0; --i)
+        p.lineTo (xFor (i), midY + toHeight (data[(size_t) ((writeIndex + i) % historySize)]));
+    p.closeSubPath();
+    return p;
+}
+
+void EchoScope::tick (float dt)
+{
+    // Once per frame: remember this frame's trace for the afterglow (newest last).
+    ghosts.push_back (buildShape (wetHistory, historyArea()));
+    while (ghosts.size() > 4)
+        ghosts.pop_front();
+
+    readoutAlpha = juce::jmax (0.0f, readoutAlpha - dt);
+    const float target = info.power ? 1.0f : 0.0f;
+    powerAnim = powerAnim < target ? juce::jmin (target, powerAnim + dt / 0.7f)
+                                   : juce::jmax (target, powerAnim - dt / 0.35f);
+    blink += dt;
+    repaint();
+}
+
+juce::Rectangle<float> EchoScope::screenArea() const  { return getLocalBounds().toFloat().reduced ((float) wellInset + 5.0f); }
+juce::Rectangle<float> EchoScope::mapArea() const     { return screenArea().reduced (14.0f, 8.0f).removeFromBottom (52.0f); }
+juce::Rectangle<float> EchoScope::historyArea() const
+{
+    auto c = screenArea().reduced (14.0f, 8.0f);
+    c.removeFromTop (16.0f);
+    c.removeFromBottom (56.0f);
+    return c;
+}
+
+std::vector<EchoScope::Tap> EchoScope::computeTaps() const
+{
+    std::vector<Tap> taps;
+    const double d = juce::jmax (1.0, info.delayMs);
+    const float fb = info.freeze ? 1.0f : info.feedback;
+    float amp = 1.0f;
+    for (int k = 1; k <= 40 && amp > 0.04f; ++k)
+    {
+        const double t = d * k;
+        if (t > 4000.0) break;
+        switch (info.mode)
+        {
+            case 1:  taps.push_back ({ t, amp, (k % 2 == 1) ? 1 : 2 }); break;
+            case 2:  taps.push_back ({ t, amp, 1 });
+                     taps.push_back ({ (d + info.offsetMs) * k, amp, 2 }); break;
+            default: taps.push_back ({ t, amp, 0 }); break;
+        }
+        amp *= fb;
+    }
+    return taps;
+}
+
+double EchoScope::mapRange (const std::vector<Tap>& taps) const
+{
+    if (dragging)
+        return dragRange;   // keep the scale still while the user drags
+    double range = 300.0;
+    for (auto& t : taps)
+        range = juce::jmax (range, t.timeMs * 1.12);
+    return juce::jmin (range, 4000.0);
 }
 
 static void glowStroke (juce::Graphics& g, const juce::Path& p, juce::Colour c, float width)
@@ -270,53 +450,83 @@ static void glowStroke (juce::Graphics& g, const juce::Path& p, juce::Colour c, 
     g.strokePath (p, juce::PathStrokeType (width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+static void glowText (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, juce::Justification j, float alpha)
+{
+    g.setColour (Palette::phosphor.withAlpha (0.22f * alpha));
+    for (auto o : { juce::Point<float> (-1.2f, 0.0f), { 1.2f, 0.0f }, { 0.0f, -1.2f }, { 0.0f, 1.2f } })
+        g.drawText (text, r.translated (o.x, o.y), j, false);
+    g.setColour (Palette::phosphor.brighter (0.3f).withAlpha (alpha));
+    g.drawText (text, r, j, false);
+}
+
 void EchoScope::paint (juce::Graphics& g)
 {
     using namespace juce;
-    ++frameCounter;
     const auto inner = getLocalBounds().toFloat().reduced ((float) wellInset);
     g.setColour (juce::Colour (0xff0b0b0a));
     g.fillRect (inner);
 
-    const auto screen = inner.reduced (5.0f);
+    const auto screen = screenArea();
     Path tube;
     tube.addRoundedRectangle (screen, 18.0f);
-    const float brightness = info.power ? 1.0f : 0.25f;
 
     {
         Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (tube);
-
-        g.setGradientFill (ColourGradient (juce::Colour (0xff0f2318).withMultipliedBrightness (brightness), screen.getCentreX(), screen.getCentreY(),
-                                           Palette::crtBack, screen.getX(), screen.getY(), true));
+        g.setColour (Palette::crtBack);
         g.fillRect (screen);
 
-        g.setColour (Palette::phosphor.withAlpha (0.09f * brightness));
-        for (int i = 1; i < 10; ++i)
-            g.drawVerticalLine ((int) (screen.getX() + screen.getWidth() * (float) i / 10.0f), screen.getY(), screen.getBottom());
-        for (int i = 1; i < 6; ++i)
-            g.drawHorizontalLine ((int) (screen.getY() + screen.getHeight() * (float) i / 6.0f), screen.getX(), screen.getRight());
-
-        if (info.power)
+        // Power-on: a dot stretches into a line, then the picture opens vertically (and the reverse).
+        const float p = powerAnim;
+        if (p > 0.0f)
         {
-            auto content = screen.reduced (14.0f, 8.0f);
-            auto top = content.removeFromTop (16.0f);
-            auto mapArea = content.removeFromBottom (52.0f);
-            content.removeFromBottom (4.0f);
+            const float open = jlimit (0.0f, 1.0f, (p - 0.25f) / 0.35f);
+            const float lineW = jlimit (0.0f, 1.0f, p / 0.25f);
+            auto lit = screen.withSizeKeepingCentre (screen.getWidth(), jmax (2.0f, screen.getHeight() * open));
 
-            g.setFont (mono (12.0f));
-            g.setColour (Palette::phosphor.withAlpha (0.6f));
-            g.drawText ("ECHO-SCOPE", top, Justification::centredLeft);
-            String timing = info.sync ? info.division + " = " + String (roundToInt (info.delayMs)) + " ms @ "
-                                            + String (info.bpm, 1) + " BPM"
-                                      : String (roundToInt (info.delayMs)) + " ms";
-            if (info.mode == 2)
-                timing << "  +" << roundToInt (info.offsetMs) << " R";
-            g.setColour (Palette::phosphor);
-            g.drawText (modeNames()[info.mode].toUpperCase() + "  " + timing, top, Justification::centredRight);
+            if (open > 0.0f)
+            {
+                Graphics::ScopedSaveState s2 (g);
+                g.reduceClipRegion (lit.toNearestInt());
+                g.setOpacity (jlimit (0.0f, 1.0f, (p - 0.25f) / 0.6f));
 
-            paintHistory (g, content);
-            paintEchoMap (g, mapArea);
+                g.setGradientFill (ColourGradient (juce::Colour (0xff0f2318), screen.getCentreX(), screen.getCentreY(),
+                                                   Palette::crtBack, screen.getX(), screen.getY(), true));
+                g.fillRect (screen);
+                g.setColour (Palette::phosphor.withAlpha (0.09f));
+                for (int i = 1; i < 10; ++i)
+                    g.drawVerticalLine ((int) (screen.getX() + screen.getWidth() * (float) i / 10.0f), screen.getY(), screen.getBottom());
+                for (int i = 1; i < 6; ++i)
+                    g.drawHorizontalLine ((int) (screen.getY() + screen.getHeight() * (float) i / 6.0f), screen.getX(), screen.getRight());
+
+                paintTrace (g, historyArea());
+
+                auto top = screen.reduced (14.0f, 8.0f).removeFromTop (16.0f);
+                g.setFont (mono (12.0f));
+                g.setColour (Palette::phosphor.withAlpha (0.6f));
+                g.drawText ("ECHO-SCOPE", top, Justification::centredLeft);
+                String timing = info.sync ? info.division + " = " + String (roundToInt (info.delayMs)) + " ms @ "
+                                                + String (info.bpm, 1) + " BPM"
+                                          : String (roundToInt (info.delayMs)) + " ms";
+                if (info.mode == 2)
+                    timing << "  +" << roundToInt (info.offsetMs) << " R";
+                g.setColour (Palette::phosphor);
+                g.drawText (modeNames()[info.mode].toUpperCase() + "  " + timing, top, Justification::centredRight);
+
+                paintEchoMap (g, mapArea());
+                paintReadout (g, historyArea());
+            }
+
+            // The bright scan line of a tube warming up / switching off
+            const float lineAlpha = 1.0f - open;
+            if (lineAlpha > 0.0f)
+            {
+                auto line = Rectangle<float> (screen.getWidth() * lineW, 2.5f).withCentre (screen.getCentre());
+                g.setColour (Palette::phosphor.withAlpha (0.25f * lineAlpha));
+                g.fillRect (line.expanded (0.0f, 6.0f));
+                g.setColour (juce::Colours::white.withAlpha (lineAlpha));
+                g.fillRect (line);
+            }
         }
 
         g.setGradientFill (ColourGradient (juce::Colours::transparentBlack, screen.getCentreX(), screen.getCentreY(),
@@ -336,11 +546,23 @@ void EchoScope::paint (juce::Graphics& g)
     g.drawRoundedRectangle (screen.expanded (1.5f), 19.0f, 1.0f);
 }
 
-void EchoScope::paintHistory (juce::Graphics& g, juce::Rectangle<float> area)
+void EchoScope::paintTrace (juce::Graphics& g, juce::Rectangle<float> area)
 {
     using namespace juce;
     const float midY = area.getCentreY();
     const float halfH = area.getHeight() * 0.5f;
+    auto xFor = [&] (int i) { return area.getX() + area.getWidth() * (float) i / (float) (historySize - 1); };
+
+    // Beat grid from the host transport (bars brighter); scrolls with the history.
+    for (int i = 0; i < historySize; ++i)
+    {
+        const float b = beatHistory[(size_t) ((writeIndex + i) % historySize)];
+        if (b > 0.0f)
+        {
+            g.setColour (Palette::phosphor.withAlpha (b > 1.5f ? 0.35f : 0.14f));
+            g.drawVerticalLine ((int) xFor (i), area.getY(), area.getBottom());
+        }
+    }
 
     g.setColour (Palette::phosphor.withAlpha (0.2f));
     g.drawHorizontalLine ((int) midY, area.getX(), area.getRight());
@@ -350,33 +572,23 @@ void EchoScope::paintHistory (juce::Graphics& g, juce::Rectangle<float> area)
         g.drawVerticalLine ((int) x, midY - (i % 5 == 0 ? 4.0f : 2.0f), midY + (i % 5 == 0 ? 4.0f : 2.0f));
     }
 
-    auto toHeight = [halfH] (float level)
-    {
-        const float db = Decibels::gainToDecibels (level, -60.0f);
-        return jlimit (0.0f, 1.0f, (db + 48.0f) / 48.0f) * halfH;
-    };
-
-    auto buildShape = [&] (const std::array<float, historySize>& data)
-    {
-        Path p;
-        p.startNewSubPath (area.getX(), midY);
-        for (int i = 0; i < historySize; ++i)
-            p.lineTo (area.getX() + area.getWidth() * (float) i / (float) (historySize - 1),
-                      midY - toHeight (data[(size_t) ((writeIndex + i) % historySize)]));
-        for (int i = historySize - 1; i >= 0; --i)
-            p.lineTo (area.getX() + area.getWidth() * (float) i / (float) (historySize - 1),
-                      midY + toHeight (data[(size_t) ((writeIndex + i) % historySize)]));
-        p.closeSubPath();
-        return p;
-    };
-
-    const auto dryShape = buildShape (dryHistory);
-    const auto wetShape = buildShape (wetHistory);
+    juce::ignoreUnused (halfH);
+    const auto dryShape = buildShape (dryHistory, area);
+    const auto wetShape = buildShape (wetHistory, area);
 
     g.setColour (Palette::phosphor.withAlpha (0.10f));
     g.fillPath (dryShape);
     g.setColour (Palette::phosphor.withAlpha (0.3f));
     g.strokePath (dryShape, PathStrokeType (0.8f));
+
+    // Afterglow: the last few frames of the trace linger and fade like real phosphor.
+    float ghostAlpha = 0.07f * (float) ghosts.size();
+    for (auto& ghost : ghosts)
+    {
+        g.setColour (Palette::phosphor.withAlpha (ghostAlpha));
+        g.strokePath (ghost, PathStrokeType (2.2f));
+        ghostAlpha -= 0.07f;
+    }
 
     g.setColour (Palette::phosphor.withAlpha (0.22f));
     g.fillPath (wetShape);
@@ -392,30 +604,8 @@ void EchoScope::paintHistory (juce::Graphics& g, juce::Rectangle<float> area)
 void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
 {
     using namespace juce;
-    struct Tap { double timeMs; float amp; int side; }; // side: 0 both, 1 left, 2 right
-    std::vector<Tap> taps;
-
-    const double d = jmax (1.0, info.delayMs);
-    const float fb = info.freeze ? 1.0f : info.feedback;
-    float amp = 1.0f;
-    for (int k = 1; k <= 40 && amp > 0.04f; ++k)
-    {
-        const double t = d * k;
-        if (t > 4000.0) break;
-        switch (info.mode)
-        {
-            case 1:  taps.push_back ({ t, amp, (k % 2 == 1) ? 1 : 2 }); break;
-            case 2:  taps.push_back ({ t, amp, 1 });
-                     taps.push_back ({ (d + info.offsetMs) * k, amp, 2 }); break;
-            default: taps.push_back ({ t, amp, 0 }); break;
-        }
-        amp *= fb;
-    }
-
-    double range = 300.0;
-    for (auto& t : taps)
-        range = jmax (range, t.timeMs * 1.12);
-    range = jmin (range, 4000.0);
+    const auto taps = computeTaps();
+    const double range = mapRange (taps);
 
     auto labelArea = area.removeFromLeft (18.0f);
     area.removeFromLeft (4.0f);
@@ -446,6 +636,17 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
     {
         const float x = area.getX() + (float) (t.timeMs / range) * area.getWidth();
         if (x > area.getRight()) continue;
+
+        // Flash when this repeat actually sounds after a sung syllable.
+        float flash = 0.0f;
+        const double tapChunks = t.timeMs / 10.0;
+        for (auto o : onsets)
+        {
+            const double d = (double) chunkClock - ((double) o + tapChunks);
+            if (d >= 0.0 && d < 30.0)
+                flash = jmax (flash, (float) std::exp (-d / 6.0));
+        }
+
         const float h = halfH * t.amp;
         const float top = t.side == 2 ? midY : midY - h;
         const float height = t.side == 0 ? h * 2.0f : h;
@@ -459,14 +660,14 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
         {
             mark.addRectangle (x - 1.5f, top, 3.0f, height);
         }
-        g.setColour (Palette::phosphor.withAlpha (0.15f));
-        g.strokePath (mark, PathStrokeType (5.0f));
-        g.setColour (Palette::phosphor.brighter (0.3f));
+        g.setColour (Palette::phosphor.withAlpha (0.15f + 0.35f * flash));
+        g.strokePath (mark, PathStrokeType (5.0f + 6.0f * flash));
+        g.setColour (Palette::phosphor.withMultipliedBrightness (0.75f + 0.25f * flash).brighter (0.3f + 0.7f * flash));
         g.fillPath (mark);
     }
 
     auto status = area.removeFromRight (70.0f).removeFromTop (14.0f);
-    if (info.freeze && (frameCounter / 30) % 2 == 0)
+    if (info.freeze && std::fmod (blink, 1.0f) < 0.5f)
     {
         g.setColour (Palette::phosphor);
         g.drawText ("FREEZE", status, Justification::centredRight);
@@ -476,6 +677,59 @@ void EchoScope::paintEchoMap (juce::Graphics& g, juce::Rectangle<float> area)
         g.setColour (Palette::phosphor.withAlpha (0.25f + 0.75f * (1.0f - info.duckGain)));
         g.drawText ("DUCK", status, Justification::centredRight);
     }
+}
+
+void EchoScope::paintReadout (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    using namespace juce;
+    const float a = jlimit (0.0f, 1.0f, readoutAlpha / 0.4f);
+    if (a <= 0.0f)
+        return;
+
+    auto box = area.withSizeKeepingCentre (jmin (area.getWidth() - 20.0f, 300.0f), 64.0f);
+    g.setColour (Palette::crtBack.withAlpha (0.82f * a));
+    g.fillRoundedRectangle (box, 6.0f);
+    g.setColour (Palette::phosphor.withAlpha (0.35f * a));
+    g.drawRoundedRectangle (box, 6.0f, 1.0f);
+
+    g.setFont (mono (13.0f));
+    glowText (g, readoutTitle, box.removeFromTop (24.0f).withTrimmedTop (6.0f), Justification::centred, 0.75f * a);
+    g.setFont (mono (28.0f));
+    glowText (g, readoutValue, box.withTrimmedBottom (4.0f), Justification::centred, a);
+}
+
+void EchoScope::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (mapArea().contains (e.position) ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void EchoScope::mouseDown (const juce::MouseEvent& e)
+{
+    if (! info.power || ! mapArea().contains (e.position))
+        return;
+    dragRange = mapRange (computeTaps());
+    dragging = true;
+    dragStartFeedback = info.feedback;
+    if (onDragStart) onDragStart();
+    mouseDrag (e);
+}
+
+void EchoScope::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragging)
+        return;
+    auto plot = mapArea().withTrimmedLeft (22.0f);
+    const double ms = juce::jlimit (10.0, maxDelayMs, (double) ((e.position.x - plot.getX()) / plot.getWidth()) * dragRange);
+    const float fb = juce::jlimit (0.0f, 0.95f, dragStartFeedback - (float) e.getDistanceFromDragStartY() / 120.0f);
+    if (onDrag) onDrag (ms, fb);
+}
+
+void EchoScope::mouseUp (const juce::MouseEvent&)
+{
+    if (! dragging)
+        return;
+    dragging = false;
+    if (onDragEnd) onDragEnd();
 }
 
 //==============================================================================
@@ -523,6 +777,50 @@ Faceplate::Faceplate (VoxSlapProcessor& p)
                      &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob, &modDepthKnob,
                      &pitchKnob, &threshKnob, &releaseKnob, &outputKnob })
         addAndMakeVisible (*k);
+
+    for (auto* k : allKnobs())
+        k->onReadout = [this] (const juce::String& t, const juce::String& v, bool changed) { scope.showReadout (t, v, changed); };
+
+    pitchKnob.slider.setDetent (0.0);
+    widthKnob.slider.setDetent (100.0);
+    outputKnob.slider.setDetent (0.0);
+
+    // Drag the echo marks on the scope: left/right = time (snaps to note values when synced), up/down = feedback.
+    scope.setTooltip ("Drag the echo marks: left/right = time, up/down = feedback");
+    scope.onDragStart = [this]
+    {
+        for (auto* id : { ParamID::timeMs, ParamID::division, ParamID::feedback })
+            processor.apvts.getParameter (id)->beginChangeGesture();
+    };
+    scope.onDragEnd = [this]
+    {
+        for (auto* id : { ParamID::timeMs, ParamID::division, ParamID::feedback })
+            processor.apvts.getParameter (id)->endChangeGesture();
+    };
+    scope.onDrag = [this] (double ms, float fb)
+    {
+        auto set = [this] (const char* id, float value)
+        {
+            auto* p = processor.apvts.getParameter (id);
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+        };
+        if (processor.apvts.getRawParameterValue (ParamID::sync)->load() > 0.5f)
+        {
+            const double quarterMs = 60000.0 / juce::jmax (20.0, processor.hostBpm.load());
+            int best = 0;
+            for (int i = 1; i < divisionNames().size(); ++i)
+                if (std::abs (divisionBeats (i) * quarterMs - ms) < std::abs (divisionBeats (best) * quarterMs - ms))
+                    best = i;
+            set (ParamID::division, (float) best);
+        }
+        else
+        {
+            set (ParamID::timeMs, (float) ms);
+        }
+        set (ParamID::feedback, fb * 100.0f);
+        scope.showReadout ("TIME / FEEDBACK", juce::String (juce::roundToInt (processor.getCurrentDelayMs())) + " ms  "
+                                                  + juce::String (juce::roundToInt (fb * 100.0f)) + " %", true);
+    };
 
     duckKnob.slider.setTooltip ("UNDER: echoes play under the voice.  AFTER: echoes hide while you sing and come out in the gaps.");
     driveKnob.slider.setTooltip ("Distortion on the repeats only - the dry voice stays clean");
@@ -697,7 +995,7 @@ void Faceplate::tick (float dt)
 
     inputMeter.update (processor.inputMeanSquare.load(), processor.inputPeak.exchange (0.0f), 1.0f, dt);
     outputMeter.update (processor.outputMeanSquare.load(), processor.outputPeak.exchange (0.0f), processor.duckGain.load(), dt);
-    processor.scope.popAll ([this] (float dry, float wet) { scope.pushHistory (dry, wet); });
+    processor.scope.popAll ([this] (float dry, float wet, float beat) { scope.pushHistory (dry, wet, beat); });
 
     const int mode = (int) s.getRawParameterValue (ParamID::mode)->load();
     const bool sync = s.getRawParameterValue (ParamID::sync)->load() > 0.5f;
@@ -716,6 +1014,9 @@ void Faceplate::tick (float dt)
     info.power = power;
     info.division = divisionNames()[(int) s.getRawParameterValue (ParamID::division)->load()];
     scope.setInfo (info);
+    scope.tick (dt);
+    for (auto* k : allKnobs())
+        k->tick (dt);
 
     timeKnob.setVisible (! sync);
     divisionKnob.setVisible (sync);

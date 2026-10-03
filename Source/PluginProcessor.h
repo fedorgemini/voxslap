@@ -5,17 +5,18 @@
 #include "Params.h"
 #include "Presets.h"
 
-// Lock-free hand-off of level history (dry/wet peaks every ~10 ms) to the scope display.
+// Lock-free hand-off of level history (dry/wet peaks every ~10 ms, plus beat marks) to the scope display.
 class ScopeFifo
 {
 public:
     static constexpr int capacity = 1024;
 
-    void push (float dry, float wet)
+    // beat: 0 = none, 1 = a beat started in this chunk, 2 = a bar started (only while the host plays)
+    void push (float dry, float wet, float beat)
     {
         int s1, n1, s2, n2;
         fifo.prepareToWrite (1, s1, n1, s2, n2);
-        if (n1 > 0) { dryBuf[(size_t) s1] = dry; wetBuf[(size_t) s1] = wet; }
+        if (n1 > 0) { dryBuf[(size_t) s1] = dry; wetBuf[(size_t) s1] = wet; beatBuf[(size_t) s1] = beat; }
         fifo.finishedWrite (n1 + n2);
     }
 
@@ -24,14 +25,14 @@ public:
     {
         int s1, n1, s2, n2;
         fifo.prepareToRead (fifo.getNumReady(), s1, n1, s2, n2);
-        for (int i = 0; i < n1; ++i) fn (dryBuf[(size_t) (s1 + i)], wetBuf[(size_t) (s1 + i)]);
-        for (int i = 0; i < n2; ++i) fn (dryBuf[(size_t) (s2 + i)], wetBuf[(size_t) (s2 + i)]);
+        for (int i = 0; i < n1; ++i) fn (dryBuf[(size_t) (s1 + i)], wetBuf[(size_t) (s1 + i)], beatBuf[(size_t) (s1 + i)]);
+        for (int i = 0; i < n2; ++i) fn (dryBuf[(size_t) (s2 + i)], wetBuf[(size_t) (s2 + i)], beatBuf[(size_t) (s2 + i)]);
         fifo.finishedRead (n1 + n2);
     }
 
 private:
     juce::AbstractFifo fifo { capacity };
-    std::array<float, capacity> dryBuf {}, wetBuf {};
+    std::array<float, capacity> dryBuf {}, wetBuf {}, beatBuf {};
 };
 
 class VoxSlapProcessor : public juce::AudioProcessor
@@ -107,6 +108,7 @@ private:
 
     int scopeCounter = 0, scopeChunk = 441;
     float scopeDryMax = 0.0f, scopeWetMax = 0.0f;
+    juce::int64 lastBeatIndex = -1, lastBarIndex = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VoxSlapProcessor)
 };

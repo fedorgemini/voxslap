@@ -25,6 +25,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
+SetupIconFile=icon.ico
+UninstallDisplayIcon={app}\VoxSlap.exe
 UninstallDisplayName=VoxSlap
 
 [Languages]

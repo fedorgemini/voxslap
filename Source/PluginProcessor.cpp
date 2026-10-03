@@ -140,11 +140,26 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         for (int ch = numIn; ch < numOut; ++ch)
             buffer.clear (ch, 0, numSamples);
 
+    bool playing = false;
+    double ppqStart = 0.0, barLength = 4.0;
     if (auto* playHead = getPlayHead())
         if (auto pos = playHead->getPosition())
+        {
             if (auto bpm = pos->getBpm())
                 if (*bpm > 0.0)
                     hostBpm.store (*bpm);
+            if (auto ppq = pos->getPpqPosition())
+            {
+                playing = pos->getIsPlaying();
+                ppqStart = *ppq;
+            }
+            if (auto sig = pos->getTimeSignature())
+                if (sig->numerator > 0 && sig->denominator > 0)
+                    barLength = sig->numerator * 4.0 / sig->denominator;
+        }
+    if (! playing)
+        lastBeatIndex = lastBarIndex = -1;
+    const double quartersPerSample = hostBpm.load() / 60.0 / sr;
 
     // ---- Block-rate parameter setup ----
     const auto mode = (EchoMode) modeParam->getIndex();
@@ -301,7 +316,18 @@ void VoxSlapProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         scopeWetMax = juce::jmax (scopeWetMax, std::abs (0.5f * (wetL + wetR)) * wetGain);
         if (++scopeCounter >= scopeChunk)
         {
-            scope.push (scopeDryMax, scopeWetMax);
+            float beatMark = 0.0f;
+            if (playing)
+            {
+                const double ppqNow = ppqStart + (double) (i + 1) * quartersPerSample;
+                const auto beat = (juce::int64) std::floor (ppqNow);
+                const auto bar = (juce::int64) std::floor (ppqNow / barLength);
+                if (lastBeatIndex >= 0 && beat != lastBeatIndex) beatMark = 1.0f;
+                if (lastBarIndex >= 0 && bar != lastBarIndex)    beatMark = 2.0f;
+                lastBeatIndex = beat;
+                lastBarIndex = bar;
+            }
+            scope.push (scopeDryMax, scopeWetMax, beatMark);
             scopeCounter = 0;
             scopeDryMax = scopeWetMax = 0.0f;
         }

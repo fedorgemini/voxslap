@@ -157,6 +157,8 @@ namespace Analog
             const auto bounds = Rectangle<float> ((float) x, (float) y, (float) w, (float) h);
             const float R = jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
             const auto c = bounds.getCentre();
+            // The knob body is drawn at its animated position (see KnobControl::tick).
+            pos = (float) props.getWithDefault ("displayPos", pos);
             const float angle = startAngle + pos * (endAngle - startAngle);
             const bool chicken = style == "chicken";
             const float knobR = R * (chicken ? 0.48f : 0.52f);

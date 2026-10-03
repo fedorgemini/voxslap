@@ -3,11 +3,29 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 #include "AnalogLookAndFeel.h"
+#include <deque>
 
 enum class KnobStyle { aluminium, black, chicken };
 
-// Knob with a silkscreened title; the value appears in a small readout while hovering/dragging.
-// Shift-drag = fine adjust, double-click or Alt-click = default value.
+// Slider with an optional centre detent and a right-click hook.
+class DetentSlider : public juce::Slider
+{
+public:
+    void setDetent (double value) { detent = value; hasDetent = true; }
+    double snapValue (double attempted, DragMode mode) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+    std::function<void()> onRightClick;
+
+private:
+    double detent = 0.0;
+    bool hasDetent = false, rightClicked = false;
+};
+
+// Knob with a silkscreened title. While it is touched, its name and value are shown on the
+// echo scope (onReadout). Shift-drag = fine, double-click / Alt-click = default, right-click = menu.
 class KnobControl : public juce::Component
 {
 public:
@@ -15,18 +33,23 @@ public:
                  KnobStyle style, const juce::String& scaleLabels = {});
 
     void paint (juce::Graphics&) override;
-    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
-    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override  { repaint(); }
-    void mouseUp (const juce::MouseEvent&) override    { repaint(); }
+    void mouseEnter (const juce::MouseEvent&) override { announce (false); }
     void mouseDown (const juce::MouseEvent&) override;
+    void tick (float dt);
 
-    juce::Slider slider;
+    DetentSlider slider;
+    std::function<void (const juce::String& title, const juce::String& value, bool changed)> onReadout;
 
 private:
+    void announce (bool changed);
+    void showMenu();
+    void enterValueDialog();
+
     juce::String title;
     double defaultValue = 0.0;
+    bool stepped = false;
+    juce::AudioParameterChoice* choiceParam = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };
 
@@ -50,8 +73,10 @@ private:
     float needle = 0.0f, velocity = 0.0f, peakLamp = 0.0f;
 };
 
-// Green-phosphor CRT: scrolling voice/echo history plus a map of where the repeats land.
-class EchoScope : public juce::Component
+// Green-phosphor CRT: scrolling voice/echo history with afterglow, beat grid, a map of where the
+// repeats land (repeats flash as they sound; drag to change time/feedback) and a readout of the
+// knob being touched. Warms up / collapses to a dot with the POWER switch.
+class EchoScope : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     struct Info
@@ -63,20 +88,48 @@ public:
         juce::String division;
     };
 
-    static constexpr int historySize = 300;
+    static constexpr int historySize = 300;   // 10 ms chunks = 3 s
 
-    void pushHistory (float dry, float wet);
-    void setInfo (const Info& i) { info = i; repaint(); }
+    void pushHistory (float dry, float wet, float beat);
+    void setInfo (const Info& i) { info = i; }
+    void showReadout (const juce::String& title, const juce::String& value, bool changed);
+    void tick (float dt);
     void paint (juce::Graphics&) override;
 
-private:
-    void paintHistory (juce::Graphics&, juce::Rectangle<float>);
-    void paintEchoMap (juce::Graphics&, juce::Rectangle<float>);
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
-    std::array<float, historySize> dryHistory {}, wetHistory {};
+    std::function<void()> onDragStart, onDragEnd;
+    std::function<void (double delayMs, float feedback01)> onDrag;
+
+private:
+    struct Tap { double timeMs; float amp; int side; }; // side: 0 both, 1 left, 2 right
+    std::vector<Tap> computeTaps() const;
+    double mapRange (const std::vector<Tap>&) const;
+    juce::Rectangle<float> screenArea() const;
+    juce::Rectangle<float> historyArea() const;
+    juce::Rectangle<float> mapArea() const;
+    void paintTrace (juce::Graphics&, juce::Rectangle<float>);
+    void paintEchoMap (juce::Graphics&, juce::Rectangle<float>);
+    void paintReadout (juce::Graphics&, juce::Rectangle<float>);
+
+    std::array<float, historySize> dryHistory {}, wetHistory {}, beatHistory {};
     int writeIndex = 0;
+    juce::int64 chunkClock = 0, lastOnset = -1000;
+    float slowDry = 0.0f;
+    std::vector<juce::int64> onsets;
     Info info;
-    int frameCounter = 0;
+
+    std::deque<juce::Path> ghosts;   // previous frames of the echo trace: phosphor afterglow
+    juce::Path buildShape (const std::array<float, historySize>&, juce::Rectangle<float>) const;
+    juce::String readoutTitle, readoutValue;
+    float readoutAlpha = 0.0f, powerAnim = 1.0f, blink = 0.0f;
+
+    bool dragging = false;
+    double dragRange = 300.0;
+    float dragStartFeedback = 0.0f;
 };
 
 // Everything at 100% scale: the rendered hardware (main unit + optional expander) and the software
@@ -107,6 +160,12 @@ private:
     void deletePresetDialog();
     void stepPreset (int delta);
     void paintGroupLabel (juce::Graphics&, juce::Rectangle<int> span, const juce::String& title);
+    std::vector<KnobControl*> allKnobs()
+    {
+        return { &modeKnob, &timeKnob, &divisionKnob, &feedbackKnob, &driveKnob, &driveTypeKnob, &duckKnob, &mixKnob,
+                 &hpfKnob, &lpfKnob, &widthKnob, &offsetKnob, &modRateKnob, &modDepthKnob,
+                 &pitchKnob, &threshKnob, &releaseKnob, &outputKnob };
+    }
 
     VoxSlapProcessor& processor;
     Analog::LookAndFeel lnf;
