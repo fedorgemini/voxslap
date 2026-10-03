@@ -35,13 +35,18 @@ juce_add_plugin(VoxSlap
     VST3_CATEGORIES Fx Delay
     AU_MAIN_TYPE kAudioUnitType_Effect)
 
-# Photo-based UI textures (baked from CC0 ambientCG scans by tools/make_textures.py)
+# UI art: photo textures (tools/make_textures.py) and Blender-rendered controls (tools/render_controls.py)
 juce_add_binary_data(VoxSlapAssets SOURCES
     Resources/panel_burgundy.jpg
     Resources/panel_black.jpg
     Resources/plate_aluminium.jpg
     Resources/wood_cheeks.jpg
-    Resources/glass_smudges.jpg)
+    Resources/glass_smudges.jpg
+    Resources/knob_alu.png
+    Resources/knob_black.png
+    Resources/knob_chicken.png
+    Resources/toggle.png
+    Resources/key.png)
 
 target_sources(VoxSlap PRIVATE
     Source/PluginProcessor.cpp
@@ -69,5 +74,5 @@ option(VOXSLAP_BUILD_TOOLS "Build the offline render/screenshot tool" OFF)
 if(VOXSLAP_BUILD_TOOLS)
     juce_add_console_app(VoxSlapRender PRODUCT_NAME "VoxSlapRender")
     target_sources(VoxSlapRender PRIVATE tools/Render.cpp)
-    target_link_libraries(VoxSlapRender PRIVATE VoxSlap juce::juce_audio_utils juce::juce_dsp)
+    target_link_libraries(VoxSlapRender PRIVATE VoxSlap VoxSlapAssets juce::juce_audio_utils juce::juce_dsp)
 endif()

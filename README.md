@@ -88,3 +88,5 @@ cmake --build build --config Release
 ## Текстуры
 Текстуры интерфейса запечены скриптом `tools/make_textures.py` из бесплатных (CC0) фотосканов
 [ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003, Fingerprints002.
+Ручки, тумблеры и клавиши отрендерены в Blender скриптом `tools/render_controls.py`
+(120 кадров поворота на ручку) и собраны в спрайты `tools/pack_controls.py`.

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <map>
+#include "BinaryData.h"
 
 namespace Analog
 {
@@ -212,76 +212,23 @@ namespace Analog
                 }
             }
 
-            if (chicken)
-            {
-                drawChickenHead (g, c, knobR, angle);
-                return;
-            }
-
-            const auto img = getKnobImage (style, knobR);
-            const float imgSize = knobR * 2.0f * imagePad;
-            g.drawImage (img, Rectangle<float> (imgSize, imgSize).withCentre (c));
-
-            if (style == "alu")
-            {
-                const auto p1 = polar (c, knobR * 0.18f, angle), p2 = polar (c, knobR * 0.78f, angle);
-                g.setColour (juce::Colours::white.withAlpha (0.6f));
-                g.drawLine (p1.x + 0.7f, p1.y + 0.9f, p2.x + 0.7f, p2.y + 0.9f, 1.2f);
-                g.setColour (juce::Colour (0xff1c1a18));
-                g.drawLine (p1.x, p1.y, p2.x, p2.y, jmax (1.6f, knobR * 0.045f));
-            }
-            else
-            {
-                const auto p1 = polar (c, knobR * 0.2f, angle), p2 = polar (c, knobR * 0.98f, angle);
-                g.setColour (juce::Colour (0xfff2ede0));
-                g.drawLine (p1.x, p1.y, p2.x, p2.y, jmax (2.0f, knobR * 0.075f));
-            }
+            const auto& sheet = style == "alu" ? aluSheet : style == "chicken" ? chickenSheet : blackSheet;
+            drawKnobFrame (g, sheet, angle, Rectangle<float> (knobR * 2.0f * imagePad, knobR * 2.0f * imagePad).withCentre (c));
         }
 
-        // Red bakelite pointer knob (Neve-style), used for stepped selectors.
-        void drawChickenHead (juce::Graphics& g, juce::Point<float> c, float r, float angle)
+        // Knob sprite sheets: 120 Blender-rendered frames, 3 degrees apart, clockwise from 12 o'clock.
+        static void drawKnobFrame (juce::Graphics& g, const juce::Image& sheet, float angle, juce::Rectangle<float> dest)
         {
-            using namespace juce;
-            Path body;
-            body.startNewSubPath (-0.17f * r, -1.08f * r);
-            body.quadraticTo (0.0f, -1.16f * r, 0.17f * r, -1.08f * r);
-            body.lineTo (0.46f * r, 0.0f);
-            body.lineTo (0.30f * r, 0.78f * r);
-            body.quadraticTo (0.0f, 0.9f * r, -0.30f * r, 0.78f * r);
-            body.lineTo (-0.46f * r, 0.0f);
-            body.closeSubPath();
-            body.addEllipse (-0.66f * r, -0.66f * r, 1.32f * r, 1.32f * r);
-            body.setUsingNonZeroWinding (true);
-
-            const auto t = AffineTransform::rotation (angle).translated (c);
-            Path shaped (body);
-            shaped.applyTransform (t);
-
-            DropShadow (juce::Colours::black.withAlpha (0.6f), (int) (r * 0.35f), { (int) (r * 0.12f) + 1, (int) (r * 0.2f) + 2 })
-                .drawForPath (g, shaped);
-
-            g.setGradientFill (ColourGradient (Palette::knobRed.brighter (0.35f), c.x - r, c.y - r,
-                                               Palette::knobRed.darker (0.9f), c.x + r, c.y + r, false));
-            g.fillPath (shaped);
-            g.setColour (juce::Colours::black.withAlpha (0.45f));
-            g.strokePath (shaped, PathStrokeType (0.9f));
-
-            // Glossy dome on the hub
-            g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.38f), c.x - r * 0.3f, c.y - r * 0.38f,
-                                               juce::Colours::transparentWhite, c.x + r * 0.2f, c.y + r * 0.2f, true));
-            g.fillEllipse (c.x - r * 0.62f, c.y - r * 0.62f, r * 1.24f, r * 1.24f);
-
-            // Grey centre insert and pointer line
-            const float ir = r * 0.36f;
-            g.setGradientFill (ColourGradient (juce::Colour (0xff9a958c), c.x - ir, c.y - ir,
-                                               juce::Colour (0xff3b3833), c.x + ir, c.y + ir, false));
-            g.fillEllipse (c.x - ir, c.y - ir, ir * 2.0f, ir * 2.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.4f));
-            g.drawEllipse (c.x - ir, c.y - ir, ir * 2.0f, ir * 2.0f, 0.8f);
-
-            const auto p1 = polar (c, r * 0.45f, angle), p2 = polar (c, r * 1.02f, angle);
-            g.setColour (juce::Colour (0xfff5efe2));
-            g.drawLine (p1.x, p1.y, p2.x, p2.y, jmax (1.6f, r * 0.07f));
+            constexpr int frames = 120, cols = 12;
+            const float turn = juce::MathConstants<float>::twoPi;
+            float a = std::fmod (angle, turn);
+            if (a < 0.0f) a += turn;
+            const int frame = juce::roundToInt (a / turn * (float) frames) % frames;
+            const int fw = sheet.getWidth() / cols;
+            const int fh = sheet.getHeight() / ((frames + cols - 1) / cols);
+            g.drawImage (sheet, juce::roundToInt (dest.getX()), juce::roundToInt (dest.getY()),
+                         juce::roundToInt (dest.getWidth()), juce::roundToInt (dest.getHeight()),
+                         (frame % cols) * fw, (frame / cols) * fh, fw, fh);
         }
 
         //======================================================================
@@ -305,50 +252,11 @@ namespace Analog
             g.drawText ("ON", Rectangle<float> (c.x + 14.0f, c.y - lever - 2.0f, 30.0f, 12.0f), Justification::centredLeft);
             g.drawText ("OFF", Rectangle<float> (c.x + 14.0f, c.y + lever - 10.0f, 30.0f, 12.0f), Justification::centredLeft);
 
-            // Mounting ring + hex nut
-            softShadow (g, c, 15.0f, 0.5f, { 1.0f, 2.5f });
-            g.setGradientFill (ColourGradient (juce::Colour (0xfff7f6f2), c.x - 15.0f, c.y - 15.0f,
-                                               juce::Colour (0xff55524c), c.x + 15.0f, c.y + 15.0f, false));
-            g.fillEllipse (c.x - 15.0f, c.y - 15.0f, 30.0f, 30.0f);
-            Path hex;
-            for (int i = 0; i < 6; ++i)
-            {
-                const auto p = polar (c, 10.5f, MathConstants<float>::pi / 3.0f * (float) i + 0.52f);
-                i == 0 ? hex.startNewSubPath (p) : hex.lineTo (p);
-            }
-            hex.closeSubPath();
-            g.setGradientFill (ColourGradient (juce::Colour (0xffe9e7e1), c.x + 8.0f, c.y - 10.0f,
-                                               juce::Colour (0xff6a665f), c.x - 8.0f, c.y + 10.0f, false));
-            g.fillPath (hex);
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.strokePath (hex, PathStrokeType (0.7f));
-            g.setColour (juce::Colour (0xff141210));
-            g.fillEllipse (c.x - 4.5f, c.y - 4.5f, 9.0f, 9.0f);
-
-            // Lever with shadow
-            const float tipY = on ? c.y - lever : c.y + lever;
-            Path bat;
-            bat.startNewSubPath (c.x - 3.0f, c.y);
-            bat.lineTo (c.x - 4.2f, tipY);
-            bat.lineTo (c.x + 4.2f, tipY);
-            bat.lineTo (c.x + 3.0f, c.y);
-            bat.closeSubPath();
-
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.fillPath (bat, AffineTransform::translation (3.0f, on ? 3.0f : 6.0f));
-            g.fillEllipse (c.x - 6.0f + 3.0f, tipY - 6.0f + (on ? 3.0f : 6.0f), 12.0f, 12.0f);
-
-            ColourGradient chrome (juce::Colour (0xff7b7871), c.x - 4.5f, c.y, juce::Colour (0xff5d5a54), c.x + 4.5f, c.y, false);
-            chrome.addColour (0.35, juce::Colour (0xfffbfaf7));
-            chrome.addColour (0.6, juce::Colour (0xffb9b6af));
-            g.setGradientFill (chrome);
-            g.fillPath (bat);
-
-            g.setGradientFill (ColourGradient (juce::Colours::white, c.x - 2.5f, tipY - 3.0f,
-                                               juce::Colour (0xff5f5c56), c.x + 5.0f, tipY + 5.0f, true));
-            g.fillEllipse (c.x - 6.0f, tipY - 6.0f, 12.0f, 12.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.drawEllipse (c.x - 6.0f, tipY - 6.0f, 12.0f, 12.0f, 0.6f);
+            // Rendered switch: frame 0 = on (lever up), 1 = off. The ring is 0.9 of 2.6 half-width units.
+            const float size = 15.0f / 0.9f * 2.6f * 2.0f;
+            const int fw = toggleSheet.getWidth() / 2;
+            g.drawImage (toggleSheet, roundToInt (c.x - size * 0.5f), roundToInt (c.y - size * 0.5f), roundToInt (size), roundToInt (size),
+                         on ? 0 : fw, 0, fw, toggleSheet.getHeight());
         }
 
         //======================================================================
@@ -357,36 +265,31 @@ namespace Analog
                                    bool highlighted, bool down) override
         {
             using namespace juce;
-            auto r = b.getLocalBounds().toFloat().reduced (1.5f);
-            const bool on = b.getToggleState();
+            const int frame = down ? 2 : b.getToggleState() ? 1 : 0;
+            const int fw = keySheet.getWidth(), fh = keySheet.getHeight() / 3, sy = frame * fh;
 
-            g.setColour (juce::Colours::black.withAlpha (0.7f));
-            g.fillRoundedRectangle (r.expanded (1.5f), 3.0f);
+            // The surround fills 120 of the 140 rendered rows; scale so it matches the button height.
+            const auto r = b.getLocalBounds().toFloat();
+            const float scale = r.getHeight() / ((float) fh * 120.0f / 140.0f);
+            const float dh = (float) fh * scale;
+            const float y = r.getCentreY() - dh * 0.5f;
+            const int slice = fw / 5;
+            const float ds = (float) slice * scale;
+            const float extra = (float) fw * scale * (8.0f / 300.0f); // transparent margin around the surround
+            const float x0 = r.getX() - extra, x1 = r.getRight() + extra;
 
-            if (! down)
+            g.setOpacity (b.isEnabled() ? 1.0f : 0.55f);
+            g.drawImage (keySheet, roundToInt (x0), roundToInt (y), roundToInt (ds), roundToInt (dh), 0, sy, slice, fh);
+            g.drawImage (keySheet, roundToInt (x0 + ds), roundToInt (y), roundToInt (x1 - x0 - 2.0f * ds), roundToInt (dh),
+                         slice, sy, fw - 2 * slice, fh);
+            g.drawImage (keySheet, roundToInt (x1 - ds), roundToInt (y), roundToInt (ds), roundToInt (dh), fw - slice, sy, slice, fh);
+            g.setOpacity (1.0f);
+
+            if (highlighted && ! down)
             {
-                g.setColour (juce::Colours::black.withAlpha (0.35f));
-                g.fillRoundedRectangle (r.translated (0.0f, 2.0f), 2.5f);
+                g.setColour (juce::Colours::white.withAlpha (0.06f));
+                g.fillRoundedRectangle (r.reduced (3.0f), 2.0f);
             }
-            if (down) r.translate (0.0f, 1.0f);
-
-            Colour top = on ? juce::Colour (0xfffff0c8) : juce::Colour (0xffeee8d8);
-            Colour bottom = on ? juce::Colour (0xfff2b65a) : juce::Colour (0xffbfb8a3);
-            if (highlighted) { top = top.brighter (0.05f); bottom = bottom.brighter (0.05f); }
-            g.setGradientFill (ColourGradient (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false));
-            g.fillRoundedRectangle (r, 2.5f);
-
-            if (on)
-            {
-                g.setGradientFill (ColourGradient (Palette::amber.withAlpha (0.55f), r.getCentreX(), r.getCentreY(),
-                                                   Palette::amber.withAlpha (0.0f), r.getRight(), r.getBottom(), true));
-                g.fillRoundedRectangle (r, 2.5f);
-            }
-
-            g.setColour (juce::Colours::white.withAlpha (0.6f));
-            g.drawLine (r.getX() + 2.0f, r.getY() + 0.8f, r.getRight() - 2.0f, r.getY() + 0.8f, 1.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.drawRoundedRectangle (r, 2.5f, 0.8f);
         }
 
         void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool down) override
@@ -442,109 +345,12 @@ namespace Analog
         static constexpr float imagePad = 1.45f;
 
     private:
-        // Knob bodies are rendered once per size: the lighting is fixed, so only the pointer moves.
-        juce::Image getKnobImage (const juce::String& style, float knobR)
-        {
-            const int key = juce::roundToInt (knobR * 4.0f);
-            auto id = style + juce::String (key);
-            if (auto it = knobCache.find (id); it != knobCache.end())
-                return it->second;
+        static juce::Image load (const char* data, int size) { return juce::ImageCache::getFromMemory (data, size); }
 
-            const float scale = 2.0f;
-            const float r = knobR * scale;
-            const int size = (int) std::ceil (r * 2.0f * imagePad);
-            juce::Image img (juce::Image::ARGB, size, size, true);
-            juce::Graphics g (img);
-            const juce::Point<float> c ((float) size * 0.5f, (float) size * 0.5f);
-
-            softShadow (g, c, r, 0.6f, { r * 0.1f, r * 0.17f });
-
-            if (style == "alu") renderAluminium (g, c, r);
-            else                renderBlack (g, c, r);
-
-            knobCache[id] = img;
-            return img;
-        }
-
-        static void knurl (juce::Graphics& g, juce::Point<float> c, float rOuter, float innerFrac, int ridges,
-                           float base, float range, juce::Colour tint)
-        {
-            using namespace juce;
-            const float light = -MathConstants<float>::pi * 0.25f;
-            for (int i = 0; i < ridges; ++i)
-            {
-                const float a0 = MathConstants<float>::twoPi * (float) i / (float) ridges;
-                const float a1 = MathConstants<float>::twoPi * (float) (i + 1) / (float) ridges;
-                float l = base + range * std::cos (0.5f * (a0 + a1) - light) + ((i % 2) ? 0.07f : -0.07f);
-                l = jlimit (0.0f, 1.0f, l);
-                Path seg;
-                seg.addPieSegment (c.x - rOuter, c.y - rOuter, rOuter * 2.0f, rOuter * 2.0f, a0, a1 + 0.004f, innerFrac);
-                g.setColour (Colour::fromFloatRGBA (l * tint.getFloatRed(), l * tint.getFloatGreen(), l * tint.getFloatBlue(), 1.0f));
-                g.fillPath (seg);
-            }
-        }
-
-        static void renderAluminium (juce::Graphics& g, juce::Point<float> c, float r)
-        {
-            using namespace juce;
-            knurl (g, c, r, 0.82f, 96, 0.58f, 0.32f, juce::Colour (0xfff2f2f6));
-
-            // Machined top face: anisotropic "bow-tie" sheen + concentric lathe rings.
-            const float fr = r * 0.82f;
-            const float light = -MathConstants<float>::pi * 0.25f;
-            for (int i = 0; i < 180; ++i)
-            {
-                const float a0 = MathConstants<float>::twoPi * (float) i / 180.0f;
-                const float a1 = MathConstants<float>::twoPi * (float) (i + 1) / 180.0f;
-                const float sheen = std::pow (std::abs (std::cos (0.5f * (a0 + a1) - light - MathConstants<float>::halfPi)), 4.0f);
-                const float l = 0.6f + 0.33f * sheen;
-                Path seg;
-                seg.addPieSegment (c.x - fr, c.y - fr, fr * 2.0f, fr * 2.0f, a0, a1 + 0.01f, 0.0f);
-                g.setColour (Colour::fromFloatRGBA (l, l, l * 1.01f, 1.0f));
-                g.fillPath (seg);
-            }
-            Random rng (77);
-            for (float rr = 2.0f; rr < fr; rr += 1.3f)
-            {
-                g.setColour ((rng.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (rng.nextFloat() * 0.07f));
-                g.drawEllipse (c.x - rr, c.y - rr, rr * 2.0f, rr * 2.0f, 0.8f);
-            }
-
-            // Bevel at the edge of the face
-            g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.9f), c.x - fr, c.y - fr,
-                                               juce::Colours::black.withAlpha (0.6f), c.x + fr, c.y + fr, false));
-            g.drawEllipse (c.x - fr, c.y - fr, fr * 2.0f, fr * 2.0f, r * 0.035f);
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.drawEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f, 1.0f);
-        }
-
-        static void renderBlack (juce::Graphics& g, juce::Point<float> c, float r)
-        {
-            using namespace juce;
-            // Knurled skirt
-            knurl (g, c, r, 0.80f, 64, 0.16f, 0.12f, juce::Colour (0xfff0f0f0));
-
-            // Flat top of the skirt
-            const float sr = r * 0.80f;
-            g.setGradientFill (ColourGradient (juce::Colour (0xff3d3b38), c.x - sr, c.y - sr,
-                                               juce::Colour (0xff0b0a0a), c.x + sr, c.y + sr, false));
-            g.fillEllipse (c.x - sr, c.y - sr, sr * 2.0f, sr * 2.0f);
-
-            // Raised cap with its own shadow and glossy dome
-            const float cr = r * 0.62f;
-            softShadow (g, c, cr, 0.55f, { r * 0.05f, r * 0.08f });
-            g.setGradientFill (ColourGradient (juce::Colour (0xff4b4844), c.x - cr * 0.5f, c.y - cr * 0.6f,
-                                               juce::Colour (0xff090808), c.x + cr * 0.7f, c.y + cr * 0.8f, true));
-            g.fillEllipse (c.x - cr, c.y - cr, cr * 2.0f, cr * 2.0f);
-            g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.28f), c.x - cr * 0.35f, c.y - cr * 0.55f,
-                                               juce::Colours::transparentWhite, c.x - cr * 0.35f, c.y + cr * 0.1f, false));
-            g.fillEllipse (c.x - cr * 0.75f, c.y - cr * 0.85f, cr * 1.2f, cr * 0.8f);
-            g.setColour (juce::Colours::white.withAlpha (0.12f));
-            g.drawEllipse (c.x - cr, c.y - cr, cr * 2.0f, cr * 2.0f, 1.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.6f));
-            g.drawEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f, 1.2f);
-        }
-
-        std::map<juce::String, juce::Image> knobCache;
+        juce::Image aluSheet     = load (BinaryData::knob_alu_png, BinaryData::knob_alu_pngSize);
+        juce::Image blackSheet   = load (BinaryData::knob_black_png, BinaryData::knob_black_pngSize);
+        juce::Image chickenSheet = load (BinaryData::knob_chicken_png, BinaryData::knob_chicken_pngSize);
+        juce::Image toggleSheet  = load (BinaryData::toggle_png, BinaryData::toggle_pngSize);
+        juce::Image keySheet     = load (BinaryData::key_png, BinaryData::key_pngSize);
     };
 }
