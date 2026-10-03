@@ -2,26 +2,32 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
-#include "VintageLookAndFeel.h"
+#include "AnalogLookAndFeel.h"
 
-// Knob with an engraved title above and a small readout below.
+enum class KnobStyle { aluminium, black, chicken };
+
+// Knob with a silkscreened title; the value appears in a small readout while hovering/dragging.
 class KnobControl : public juce::Component
 {
 public:
-    KnobControl (juce::AudioProcessorValueTreeState&, const char* paramID, const juce::String& title, bool big = false);
+    KnobControl (juce::AudioProcessorValueTreeState&, const char* paramID, const juce::String& title,
+                 KnobStyle style, const juce::String& scaleLabels = {});
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+    void mouseUp (const juce::MouseEvent&) override    { repaint(); }
 
     juce::Slider slider;
 
 private:
     juce::String title;
-    bool big;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };
 
-// Moving-coil VU meter with needle ballistics.
+// Back-lit moving-coil VU meter.
 class VUMeter : public juce::Component
 {
 public:
@@ -35,7 +41,7 @@ private:
     float needle = 0.0f, peakLamp = 0.0f;
 };
 
-// Green-phosphor display: scrolling dry/wet history plus a map of where the repeats land.
+// Green-phosphor CRT: scrolling voice/echo history plus a map of where the repeats land.
 class EchoScope : public juce::Component
 {
 public:
@@ -72,57 +78,55 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
-    static constexpr int editorWidth = 980;
-    static constexpr int simpleHeight = 540;
-    static constexpr int advancedHeight = 750;
+    static constexpr int editorWidth = 1000;
+    static constexpr int cheekWidth = 26;
+    static constexpr int topUnitHeight = 540;
+    static constexpr int bottomUnitHeight = 196;
 
 private:
-    void timerCallback() override;
     void setAdvanced (bool);
     bool isAdvanced() const;
     void refreshPresetList();
     void savePresetDialog();
     void deletePresetDialog();
     void stepPreset (int delta);
-    void setChoiceParam (const char* id, int index);
-    void drawSection (juce::Graphics&, juce::Rectangle<int>, const juce::String& title);
+    void buildTextures();
+    void paintUnit (juce::Graphics&, juce::Rectangle<int>, const juce::Image& texture);
+    void paintGroupLabel (juce::Graphics&, juce::Rectangle<int> span, const juce::String& title);
 
     VoxSlapProcessor& processor;
-    Vintage::LookAndFeel lnf;
+    Analog::LookAndFeel lnf;
+    juce::TooltipWindow tooltips { this, 600 };
 
-    // Header
+    // Name plate
     juce::ComboBox presetBox;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, saveButton { "SAVE" }, deleteButton { "DEL" };
     juce::TextButton simpleButton { "SIMPLE" }, advancedButton { "ADVANCED" };
 
-    // Display
+    // Meter bridge
     VUMeter inputMeter { "INPUT" }, outputMeter { "OUTPUT" };
     EchoScope scope;
 
-    // Main controls
-    std::array<juce::TextButton, 3> modeButtons;
-    KnobControl timeKnob, divisionKnob, feedbackKnob, driveKnob, duckKnob, mixKnob;
+    // Main unit
+    KnobControl modeKnob, timeKnob, divisionKnob, feedbackKnob, driveKnob, driveTypeKnob, duckKnob, mixKnob;
     juce::ToggleButton syncToggle { "SYNC" };
-    juce::ComboBox driveTypeBox;
 
-    // Advanced controls
+    // Advanced unit
     KnobControl hpfKnob, lpfKnob, widthKnob, offsetKnob, modRateKnob, modDepthKnob,
                 pitchKnob, threshKnob, releaseKnob, outputKnob;
     juce::ToggleButton reverseToggle { "REVERSE" }, freezeToggle { "FREEZE" };
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     std::unique_ptr<ButtonAttachment> syncAttachment, reverseAttachment, freezeAttachment;
-    std::unique_ptr<ComboAttachment> driveTypeAttachment;
 
-    juce::Image panelTexture;
+    juce::Image woodTexture, burgundyTexture, blackTexture, plateTexture;
     juce::String shownPresetName;
     int shownPresetCount = -1;
 
-    // Section frames (computed in resized, drawn in paint)
-    juce::Rectangle<int> displayArea, mainArea, advancedArea;
-    std::vector<std::pair<juce::Rectangle<int>, juce::String>> sections;
+    juce::Rectangle<int> topUnit, bottomUnit, namePlate;
+    std::vector<std::pair<juce::Rectangle<int>, juce::String>> groupLabels;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VoxSlapEditor)
 };
