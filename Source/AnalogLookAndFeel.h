@@ -144,6 +144,8 @@ namespace Analog
 
         //======================================================================
         // Knobs. Slider properties: "knob" = alu | black | chicken; "labels" = "a|b|c".
+        // Only the knob body is drawn here; the printed scale belongs to the panel (drawKnobScale),
+        // so turning one knob can never paint over the labels of its neighbours.
         void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
                                float startAngle, float endAngle, juce::Slider& slider) override
         {
@@ -152,8 +154,6 @@ namespace Analog
 
             const auto& props = slider.getProperties();
             const String style = props.getWithDefault ("knob", "black").toString();
-            StringArray labels = StringArray::fromTokens (props.getWithDefault ("labels", "0|1|2|3|4|5|6|7|8|9|10").toString(), "|", "");
-
             const auto bounds = Rectangle<float> ((float) x, (float) y, (float) w, (float) h);
             const float R = jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
             const auto c = bounds.getCentre();
@@ -163,11 +163,34 @@ namespace Analog
             const bool chicken = style == "chicken";
             const float knobR = R * (chicken ? 0.48f : 0.52f);
 
-            // Printed scale: dots + labels in worn silkscreen ink
-            setInk (g, Palette::silkscreen, panelOrigin (slider));
+            // One of 120 Blender-rendered frames, 3 degrees apart, clockwise from 12 o'clock.
+            const auto& sheet = style == "alu" ? art().alu : chicken ? art().chicken : art().black;
+            constexpr int frames = 120, cols = 12, rows = 10;
+            const float turn = MathConstants<float>::twoPi;
+            float a = std::fmod (angle, turn);
+            if (a < 0.0f) a += turn;
+            const int frame = roundToInt (a / turn * (float) frames) % frames;
+            drawSheetFrame (g, sheet, frame % cols, frame / cols, cols, rows,
+                            Rectangle<float> (knobR * 2.0f * imagePad, knobR * 2.0f * imagePad).withCentre (c));
+        }
+
+        // Printed scale around a knob (dots + labels), drawn by the panel underneath the knobs.
+        static void drawKnobScale (juce::Graphics& g, const juce::Slider& slider, juce::Rectangle<float> bounds, float alpha)
+        {
+            using namespace juce;
+            const auto& props = slider.getProperties();
+            const bool chicken = props.getWithDefault ("knob", "black").toString() == "chicken";
+            StringArray labels = StringArray::fromTokens (props.getWithDefault ("labels", "0|1|2|3|4|5|6|7|8|9|10").toString(), "|", "");
+            const auto rp = slider.getRotaryParameters();
+            const float startAngle = rp.startAngleRadians, endAngle = rp.endAngleRadians;
+
+            const float R = jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+            const auto c = bounds.getCentre();
             const int n = labels.size();
             const float dotR = R * 0.68f, labelR = R * 0.84f;
             const float fontSize = jlimit (9.5f, 12.5f, R * 0.2f);
+
+            g.setColour (Palette::silkscreen.withMultipliedAlpha (alpha));
             g.setFont (font (fontSize));
             for (int i = 0; i < n; ++i)
             {
@@ -195,16 +218,6 @@ namespace Analog
                     g.drawText (labels[i], box, just, false);
                 }
             }
-
-            // Knob body: one of 120 Blender-rendered frames, 3 degrees apart, clockwise from 12 o'clock.
-            const auto& sheet = style == "alu" ? art().alu : chicken ? art().chicken : art().black;
-            constexpr int frames = 120, cols = 12, rows = 10;
-            const float turn = MathConstants<float>::twoPi;
-            float a = std::fmod (angle, turn);
-            if (a < 0.0f) a += turn;
-            const int frame = roundToInt (a / turn * (float) frames) % frames;
-            drawSheetFrame (g, sheet, frame % cols, frame / cols, cols, rows,
-                            Rectangle<float> (knobR * 2.0f * imagePad, knobR * 2.0f * imagePad).withCentre (c));
         }
 
         //======================================================================

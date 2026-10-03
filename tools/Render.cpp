@@ -74,7 +74,7 @@ int main (int argc, char** argv)
     const juce::File outDir (argc > 1 ? juce::String (argv[1]) : juce::File::getCurrentWorkingDirectory().getFullPathName());
     outDir.createDirectory();
 
-    double sr = 48000.0;
+    double sr = juce::SystemStats::getEnvironmentVariable ("VOXSLAP_SR", "48000").getDoubleValue();
     juce::AudioBuffer<float> input;
     if (argc > 2)
     {

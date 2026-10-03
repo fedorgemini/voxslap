@@ -62,8 +62,6 @@ KnobControl::KnobControl (juce::AudioProcessorValueTreeState& state, const char*
     slider.setVelocityModeParameters (0.25, 1, 0.0, true, ModifierKeys::shiftModifier);
     slider.setScrollWheelEnabled (true);
     slider.addMouseListener (this, false);
-    slider.setPaintingIsUnclipped (true);
-    setPaintingIsUnclipped (true);
 
     auto* param = state.getParameter (paramID);
     choiceParam = dynamic_cast<AudioParameterChoice*> (param);
@@ -1018,9 +1016,15 @@ void Faceplate::tick (float dt)
     for (auto* k : allKnobs())
         k->tick (dt);
 
-    timeKnob.setVisible (! sync);
-    divisionKnob.setVisible (sync);
-    offsetKnob.setAlpha (mode == 2 ? 1.0f : 0.45f);
+    // Scales are painted by the panel, so redraw it when a knob's scale swaps or dims.
+    const float offsetAlpha = mode == 2 ? 1.0f : 0.45f;
+    if (timeKnob.isVisible() == sync || offsetKnob.getAlpha() != offsetAlpha)
+    {
+        timeKnob.setVisible (! sync);
+        divisionKnob.setVisible (sync);
+        offsetKnob.setAlpha (offsetAlpha);
+        repaint();
+    }
 
     // Switch levers travel through the in-between frames instead of jumping.
     if (powerSwitch.getToggleState() != power)
@@ -1101,6 +1105,11 @@ void Faceplate::paint (juce::Graphics& g)
 
     for (auto& [span, title] : groupLabels)
         paintGroupLabel (g, span, title);
+
+    // Knob scales are silkscreen on the panel, so they are drawn here, beneath the knobs.
+    for (auto* k : allKnobs())
+        if (k->isVisible())
+            Analog::LookAndFeel::drawKnobScale (g, k->slider, k->slider.getBounds().translated (k->getX(), k->getY()).toFloat(), k->getAlpha());
 
     // Footer: maker's line, power switch with lamp
     {
