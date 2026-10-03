@@ -84,3 +84,7 @@ cmake --build build --config Release
 
 Лицензия JUCE: бесплатна для личного использования и для проектов с доходом до $50k в год
 (или под AGPLv3). Для раздачи друзьям этого достаточно.
+
+## Текстуры
+Текстуры интерфейса запечены скриптом `tools/make_textures.py` из бесплатных (CC0) фотосканов
+[ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003, Fingerprints002.

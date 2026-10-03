@@ -35,6 +35,14 @@ juce_add_plugin(VoxSlap
     VST3_CATEGORIES Fx Delay
     AU_MAIN_TYPE kAudioUnitType_Effect)
 
+# Photo-based UI textures (baked from CC0 ambientCG scans by tools/make_textures.py)
+juce_add_binary_data(VoxSlapAssets SOURCES
+    Resources/panel_burgundy.jpg
+    Resources/panel_black.jpg
+    Resources/plate_aluminium.jpg
+    Resources/wood_cheeks.jpg
+    Resources/glass_smudges.jpg)
+
 target_sources(VoxSlap PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
@@ -48,6 +56,7 @@ target_compile_definitions(VoxSlap PUBLIC
 
 target_link_libraries(VoxSlap
     PRIVATE
+        VoxSlapAssets
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC

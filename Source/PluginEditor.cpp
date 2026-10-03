@@ -1,9 +1,38 @@
 #include "PluginEditor.h"
-#include "Textures.h"
+#include "BinaryData.h"
 
 using namespace Analog;
 
 static const juce::Identifier advancedProp { "advanced" };
+
+// Greyscale smudge scan turned into an alpha mask, shared by every piece of glass.
+struct GlassSmudges
+{
+    GlassSmudges()
+    {
+        auto src = juce::ImageCache::getFromMemory (BinaryData::glass_smudges_jpg, BinaryData::glass_smudges_jpgSize);
+        mask = juce::Image (juce::Image::SingleChannel, src.getWidth(), src.getHeight(), false);
+        juce::Image::BitmapData in (src, juce::Image::BitmapData::readOnly);
+        juce::Image::BitmapData out (mask, juce::Image::BitmapData::writeOnly);
+        for (int y = 0; y < src.getHeight(); ++y)
+            for (int x = 0; x < src.getWidth(); ++x)
+                *out.getPixelPointer (x, y) = in.getPixelColour (x, y).getGreen();
+    }
+    juce::Image mask;
+};
+
+static void drawGlassSmudges (juce::Graphics& g, juce::Rectangle<float> glass, float alpha, int seed)
+{
+    juce::SharedResourcePointer<GlassSmudges> smudges;
+    const auto& m = smudges->mask;
+    // Each piece of glass shows a different part of the scan.
+    const int sx = (seed * 173) % (m.getWidth() / 2), sy = (seed * 97) % (m.getHeight() / 2);
+    juce::Graphics::ScopedSaveState save (g);
+    g.reduceClipRegion (glass.toNearestInt());
+    g.setColour (juce::Colours::white.withAlpha (alpha));
+    g.drawImage (m, (int) glass.getX(), (int) glass.getY(), (int) glass.getWidth(), (int) glass.getHeight(),
+                 sx, sy, m.getWidth() / 2, m.getHeight() / 2, true);
+}
 
 //==============================================================================
 // Short numbers for printed scales: 2 significant digits, "k" for thousands.
@@ -217,6 +246,7 @@ void VUMeter::paint (juce::Graphics& g)
                                        juce::Colours::transparentWhite, face.getX() + face.getWidth() * 0.4f, face.getCentreY(), false));
     g.fillPath (glare);
 
+    drawGlassSmudges (g, face, 0.09f, label.length());
     drawJewel (g, { face.getRight() - 13.0f, face.getY() + 15.0f }, 3.5f, Palette::lampRed, peakLamp);
 }
 
@@ -294,6 +324,7 @@ void EchoScope::paint (juce::Graphics& g)
         g.setGradientFill (ColourGradient (juce::Colours::white.withAlpha (0.10f), screen.getX(), screen.getY(),
                                            juce::Colours::transparentWhite, screen.getX() + screen.getWidth() * 0.35f, screen.getCentreY(), false));
         g.fillRect (screen);
+        drawGlassSmudges (g, screen, 0.07f, 3);
     }
 
     g.setColour (juce::Colours::black);
@@ -520,11 +551,11 @@ VoxSlapEditor::~VoxSlapEditor()
 
 void VoxSlapEditor::buildTextures()
 {
-    const int unitW = editorWidth - 2 * cheekWidth;
-    woodTexture     = tex::wood (cheekWidth * 2, topUnitHeight + bottomUnitHeight, 11);
-    burgundyTexture = tex::paintedMetal (unitW, topUnitHeight, Palette::burgundy, 23);
-    blackTexture    = tex::paintedMetal (unitW, bottomUnitHeight, Palette::blackPanel, 37, 1.6f);
-    plateTexture    = tex::brushedMetal ((unitW - 36) * 2, 60 * 2, Palette::aluminium, 51);
+    auto load = [] (const char* data, int size) { return juce::ImageCache::getFromMemory (data, size); };
+    woodTexture     = load (BinaryData::wood_cheeks_jpg, BinaryData::wood_cheeks_jpgSize);
+    burgundyTexture = load (BinaryData::panel_burgundy_jpg, BinaryData::panel_burgundy_jpgSize);
+    blackTexture    = load (BinaryData::panel_black_jpg, BinaryData::panel_black_jpgSize);
+    plateTexture    = load (BinaryData::plate_aluminium_jpg, BinaryData::plate_aluminium_jpgSize);
 }
 
 bool VoxSlapEditor::isAdvanced() const
@@ -723,7 +754,8 @@ void VoxSlapEditor::paint (juce::Graphics& g)
     for (int side = 0; side < 2; ++side)
     {
         const Rectangle<int> cheek (side == 0 ? 0 : getWidth() - cheekWidth, 0, cheekWidth, h);
-        g.drawImage (woodTexture, cheek.getX(), 0, cheekWidth, h, side * cheekWidth, 0, cheekWidth, h);
+        const int sw = woodTexture.getWidth() / 2;
+        g.drawImage (woodTexture, cheek.getX(), 0, cheekWidth, h, side * sw, 0, sw, juce::jmin (woodTexture.getHeight(), h * 2));
         const auto cf = cheek.toFloat();
         ColourGradient varnish (juce::Colours::black.withAlpha (0.45f), cf.getX(), 0.0f,
                                 juce::Colours::black.withAlpha (0.45f), cf.getRight(), 0.0f, false);
