@@ -71,7 +71,7 @@
 - 100% / 125% / 150% — размер окна.
 
 ## Пресеты
-16 заводских пресетов, включая **Cupsize Slap**, Classic 50s Slapback, Phone Slap, Ping-Pong,
+17 заводских пресетов, включая **Cupsize Slap** (подогнан под референс) и **Cupsize Slap Long**, Classic 50s Slapback, Phone Slap, Ping-Pong,
 Wide Double, Lo-Fi Tape Echo, Dark Throw (эхо только после фраз), Radio Ghost, Reverse Swell,
 Octave Up Echo, Dub Feedback и другие.
 
@@ -109,4 +109,4 @@ cmake --build build --config Release
 [ambientCG](https://ambientcg.com): PaintedMetal004, Metal011, Wood066, SurfaceImperfections003.
 Лицевые панели (`tools/render_faceplate.py`), ручки и тумблеры (`tools/render_controls.py`, 120 кадров
 поворота на ручку) отрендерены в Blender; спрайты собирает `tools/pack_controls.py`.
-Шрифты Barlow / Barlow Condensed и Share Tech Mono — SIL Open Font License (`Resources/fonts/OFL*.txt`).
+Шрифты Michroma, Barlow и Share Tech Mono — SIL Open Font License (`Resources/fonts/OFL*.txt`).

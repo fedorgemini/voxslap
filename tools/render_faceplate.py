@@ -217,24 +217,9 @@ def cheek(x, unit_h, v0, v1, uoff):
 
 
 def emblem(cx, cy):
-    enamel = material("Enamel", (0.006, 0.006, 0.006), 0.5, specular=0.15)
-    chrome = material("EmblemChrome", (0.9, 0.9, 0.88), 0.12, 1.0)
-    z = PANEL_Z + 0.04
-    bpy.ops.mesh.primitive_cylinder_add(radius=19 * U, depth=0.02, vertices=96, location=P(cx, cy, z + 0.01))
-    disc = bpy.context.active_object
-    assign(disc, enamel)
-    bevel(disc, 0.004, 2)
-    for r in (21, 13.5, 8.5, 3.5):
-        bpy.ops.mesh.primitive_torus_add(major_radius=r * U, minor_radius=(1.6 if r > 20 else 1.0) * U,
-                                         major_segments=96, minor_segments=12, location=P(cx, cy, z + 0.02))
-        t = bpy.context.active_object
-        assign(t, chrome)
-        bpy.ops.object.shade_smooth()
-    # Leave the right half of the inner rings open, like echoes travelling outwards: ")))"
-    hider = slab("EmblemCut", cx - 19, cy - 19, 19, 38, z - 0.01, z + 0.05)
-    for o in [o for o in bpy.context.scene.objects if o.name.startswith("Torus")]:
-        if o.dimensions.x < 40 * U:
-            cut(o, hider)
+    sys.path.insert(0, HERE)
+    from emblem import build_emblem
+    build_emblem (P(cx, cy).x, P(cx, cy).y, PANEL_Z + 0.035, 19 * U)
 
 
 # ---------------------------------------------------------------- units

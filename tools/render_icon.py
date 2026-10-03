@@ -132,41 +132,11 @@ top = 0.6
 chrome = mat("Chrome", (0.92, 0.92, 0.9), 0.1, 1.0)
 enamel = mat("Enamel", (0.006, 0.006, 0.006), 0.35, specular=0.2, coat=0.3)
 
-# Emblem: enamel disc in a chrome bezel, three arcs opening to the right ")))"
-bpy.ops.mesh.primitive_cylinder_add(radius=2.75, depth=0.16, vertices=160, location=(0, 0, top + 0.08))
-disc = bpy.context.active_object
-assign(disc, enamel)
-bpy.ops.mesh.primitive_torus_add(major_radius=2.9, minor_radius=0.2, major_segments=160, minor_segments=24,
-                                 location=(0, 0, top + 0.14))
-rim = bpy.context.active_object
-assign(rim, chrome)
-bpy.ops.object.shade_smooth()
-
-arcs = []
-for r in (0.55, 1.25, 1.95):
-    bpy.ops.mesh.primitive_torus_add(major_radius=r, minor_radius=0.16, major_segments=128, minor_segments=20,
-                                     location=(-0.55, 0, top + 0.2))
-    t = bpy.context.active_object
-    assign(t, chrome)
-    bpy.ops.object.shade_smooth()
-    arcs.append(t)
-
-# Keep only the right half of each ring
-bpy.ops.mesh.primitive_cube_add(size=1, location=(-0.55 - 1.5, 0, top + 0.2))
-cutter = bpy.context.active_object
-cutter.scale = (3.0, 6.0, 1.0)
-cutter.hide_render = True
-for t in arcs[1:]:
-    m = t.modifiers.new("Cut", "BOOLEAN")
-    m.operation = "DIFFERENCE"
-    m.object = cutter
-# The innermost ring becomes a dot (the voice)
-bpy.ops.mesh.primitive_uv_sphere_add(radius=0.42, location=(-0.55, 0, top + 0.18))
-dot = bpy.context.active_object
-dot.scale.z = 0.5
-assign(dot, chrome)
-bpy.ops.object.shade_smooth()
-bpy.data.objects.remove(arcs[0])
+# Emblem: shared with the plug-in's name plate (tools/emblem.py)
+import sys
+sys.path.insert(0, HERE)
+from emblem import build_emblem
+build_emblem(0.0, 0.0, top, 2.75)
 
 # Corner screws
 for x, y in ((-3.3, 3.3), (3.3, 3.3), (-3.3, -3.3), (3.3, -3.3)):

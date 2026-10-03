@@ -196,7 +196,7 @@ void KnobControl::resized()
 void KnobControl::paint (juce::Graphics& g)
 {
     auto titleArea = getLocalBounds().removeFromTop (20);
-    g.setFont (font (14.5f));
+    g.setFont (font (getWidth() < 90 ? 12.5f : 14.5f));
     setInk (g, Palette::silkscreen, panelOrigin (*this));
     g.drawText (title, titleArea, juce::Justification::centred);
 }
@@ -287,7 +287,7 @@ void VUMeter::paint (juce::Graphics& g)
         const float a = angleFor ((float) pct / 100.0f / 1.4125f);
         g.drawLine (Line<float> (polar (pivot, radius - 2.0f, a), polar (pivot, radius - 7.0f, a)), 1.0f);
         if (pct % 50 == 0)
-            g.drawText (String (pct) + (pct == 100 ? "%" : ""), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 14.0f, a)), Justification::centred);
+            g.drawText (String (pct), Rectangle<float> (30.0f, 11.0f).withCentre (polar (pivot, radius - 14.0f, a)), Justification::centred);
     }
 
     const char* modeName = mode == Mode::input ? "INPUT" : mode == Mode::output ? "OUTPUT" : "ECHO DUCK";
@@ -748,7 +748,7 @@ Faceplate::Faceplate (VoxSlapProcessor& p)
       modRateKnob   (p.apvts, ParamID::modRate,     "RATE",          KnobStyle::black, "auto"),
       modDepthKnob  (p.apvts, ParamID::modDepth,    "DEPTH",         KnobStyle::black, "0||5||10"),
       pitchKnob     (p.apvts, ParamID::pitch,       "PITCH",         KnobStyle::black, "-12||0||+12"),
-      threshKnob    (p.apvts, ParamID::duckThresh,  "THRESHOLD",     KnobStyle::black, "-60||-30||0"),
+      threshKnob    (p.apvts, ParamID::duckThresh,  "THRESH",        KnobStyle::black, "-60||-30||0"),
       releaseKnob   (p.apvts, ParamID::duckRelease, "RELEASE",       KnobStyle::black, "auto"),
       outputKnob    (p.apvts, ParamID::output,      "OUTPUT",        KnobStyle::black, "-24|||+12")
 {
@@ -1018,7 +1018,7 @@ void Faceplate::tick (float dt)
 
     // Scales are painted by the panel, so redraw it when a knob's scale swaps or dims.
     const float offsetAlpha = mode == 2 ? 1.0f : 0.45f;
-    if (timeKnob.isVisible() == sync || offsetKnob.getAlpha() != offsetAlpha)
+    if (timeKnob.isVisible() == sync || divisionKnob.isVisible() != sync || offsetKnob.getAlpha() != offsetAlpha)
     {
         timeKnob.setVisible (! sync);
         divisionKnob.setVisible (sync);
@@ -1180,7 +1180,7 @@ void Faceplate::resized()
         auto timeArea = row.removeFromLeft (136);
         timeKnob.setBounds (timeArea);
         divisionKnob.setBounds (timeArea);
-        syncToggle.setBounds (row.removeFromLeft (58).withSizeKeepingCentre (58, 120));
+        syncToggle.setBounds (row.removeFromLeft (58).withSizeKeepingCentre (74, 120));
         feedbackKnob.setBounds (row.removeFromLeft (112));
         const int delayEnd = row.getX();
         driveKnob.setBounds (row.removeFromLeft (112));
@@ -1233,7 +1233,7 @@ void Faceplate::resized()
         groupLabels.push_back ({ { row.getX(), y, row.getWidth(), lh }, "OUT" });
 
         for (auto* t : { &reverseToggle, &freezeToggle })
-            t->setBounds (t->getBounds().withSizeKeepingCentre (tw, 120));
+            t->setBounds (t->getBounds().withSizeKeepingCentre (tw + 12, 120));
     }
 
     // ---- Toolbar ----

@@ -38,8 +38,9 @@ namespace Analog
         Art()
         {
             using namespace BinaryData;
-            silk     = juce::Typeface::createSystemTypefaceFor (BarlowCondensedSemiBold_ttf, BarlowCondensedSemiBold_ttfSize);
-            silkBold = juce::Typeface::createSystemTypefaceFor (BarlowCondensedBold_ttf, BarlowCondensedBold_ttfSize);
+            // Michroma: Microgramma/Eurostile-style extended face, as printed on 1970s studio and hi-fi gear.
+            silk     = juce::Typeface::createSystemTypefaceFor (MichromaRegular_ttf, MichromaRegular_ttfSize);
+            silkBold = silk;
             ui       = juce::Typeface::createSystemTypefaceFor (BarlowMedium_ttf, BarlowMedium_ttfSize);
             vfd      = juce::Typeface::createSystemTypefaceFor (ShareTechMonoRegular_ttf, ShareTechMonoRegular_ttfSize);
 
@@ -59,8 +60,9 @@ namespace Analog
 
     inline juce::Font font (float size, bool bold = false)
     {
-        return juce::Font (juce::FontOptions (bold ? art().silkBold : art().silk).withHeight (size * 1.18f))
-                   .withExtraKerningFactor (0.07f);
+        // Extended face: set a little smaller than a condensed one would be.
+        return juce::Font (juce::FontOptions (bold ? art().silkBold : art().silk).withHeight (size * (bold ? 0.92f : 0.84f)))
+                   .withExtraKerningFactor (0.04f);
     }
     inline juce::Font uiFont (float size) { return juce::Font (juce::FontOptions (art().ui).withHeight (size)); }
     inline juce::Font mono (float size)   { return juce::Font (juce::FontOptions (art().vfd).withHeight (size * 1.12f)); }
@@ -246,9 +248,9 @@ namespace Analog
 
             const auto c = area.getCentre();
             const float lever = jmin (30.0f, area.getHeight() * 0.36f);
-            g.setFont (font (10.0f));
-            g.drawText ("ON", Rectangle<float> (c.x + 15.0f, c.y - lever - 2.0f, 30.0f, 12.0f), Justification::centredLeft);
-            g.drawText ("OFF", Rectangle<float> (c.x + 15.0f, c.y + lever - 10.0f, 30.0f, 12.0f), Justification::centredLeft);
+            g.setFont (font (9.0f));
+            g.drawText ("ON", Rectangle<float> (c.x + 12.0f, c.y - lever - 2.0f, 30.0f, 12.0f), Justification::centredLeft);
+            g.drawText ("OFF", Rectangle<float> (c.x + 12.0f, c.y + lever - 10.0f, 30.0f, 12.0f), Justification::centredLeft);
 
             // The ring is 0.9 of 2.6 half-width units in the render; show it at 15 px radius.
             const float size = 15.0f / 0.9f * 2.6f * 2.0f;

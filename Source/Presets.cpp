@@ -12,10 +12,18 @@ const std::vector<FactoryPreset>& getFactoryPresets()
     {
         { "Init", {} },
 
-        { "Cupsize Slap", { { mode, 0 }, { ParamID::sync, 1 }, { division, 2 }, { feedback, 18 }, { mix, 38 },
-                            { hpf, 420 }, { lpf, 4800 }, { drive, 35 }, { driveType, 0 },
-                            { width, 120 }, { duck, 45 }, { duckThresh, -32 }, { duckRelease, 180 },
-                            { modRate, 0.7f }, { modDepth, 12 } } },
+        // Matched to the reference (Cupsize - "Ulybnis'", from 0:38): a short ~24 ms slap with repeats
+        // around 48/72 ms, the right side trailing ~12 ms, mostly centred, lightly saturated.
+        { "Cupsize Slap", { { mode, 2 }, { ParamID::sync, 0 }, { timeMs, 24 }, { offset, 12 }, { feedback, 28 }, { mix, 34 },
+                            { hpf, 350 }, { lpf, 6500 }, { drive, 25 }, { driveType, 0 },
+                            { width, 55 }, { duck, 15 }, { duckThresh, -32 }, { duckRelease, 150 },
+                            { modRate, 0.9f }, { modDepth, 10 } } },
+
+        // The earlier, longer interpretation (1/16 note slap) for comparison.
+        { "Cupsize Slap Long", { { mode, 0 }, { ParamID::sync, 1 }, { division, 2 }, { feedback, 18 }, { mix, 38 },
+                                 { hpf, 420 }, { lpf, 4800 }, { drive, 35 }, { driveType, 0 },
+                                 { width, 120 }, { duck, 45 }, { duckThresh, -32 }, { duckRelease, 180 },
+                                 { modRate, 0.7f }, { modDepth, 12 } } },
 
         { "Classic 50s Slapback", { { mode, 0 }, { ParamID::sync, 0 }, { timeMs, 115 }, { feedback, 8 }, { mix, 32 },
                                     { hpf, 150 }, { lpf, 5500 }, { drive, 18 }, { driveType, 0 },
